@@ -15,7 +15,15 @@ def _set_chinese_font(style):
         if fonts is None:
             fonts = OxmlElement('w:rFonts')
             rpr.append(fonts)
-        fonts.set(qn('w:eastAsia'), '苹方-简')
+        import platform
+        system = platform.system()
+        if system == 'Darwin':
+            font_name = '苹方-简'
+        elif system == 'Windows':
+            font_name = '微软雅黑'
+        else:
+            font_name = 'Noto Sans CJK SC'
+        fonts.set(qn('w:eastAsia'), font_name)
     except Exception:
         pass
 

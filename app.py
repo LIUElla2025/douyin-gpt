@@ -43,7 +43,7 @@ def main():
     if missing:
         st.error(
             f"缺少依赖包: {', '.join(missing)}\n\n"
-            "请运行: `pip install -r douyin_gpt/requirements.txt`"
+            "请运行: `pip install -r requirements.txt`"
         )
         return
     st.caption("输入抖音号 → 自动提取所有视频文字稿 → 生成 Word + 博主 GPT 对话")
@@ -58,7 +58,7 @@ def main():
             st.warning("⚠️ Apify Token 未设置")
             apify_input = st.text_input("Apify API Token", type="password", key="apify_token_input")
             if apify_input:
-                st.info("请将 Token 写入 backend/.env 文件后重启")
+                st.info("请将 Token 写入 .env 文件后重启")
 
         if ANTHROPIC_API_KEY:
             st.success("✅ Anthropic API Key 已配置")

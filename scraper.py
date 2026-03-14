@@ -14,6 +14,11 @@ from pathlib import Path
 from config import APIFY_API_TOKEN, TEMP_DIR, AUDIO_DIR, TRANSCRIPTS_DIR
 
 
+def _sanitize_id(douyin_id: str) -> str:
+    """清理抖音号，防止路径穿越攻击"""
+    return re.sub(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]', '_', douyin_id)
+
+
 # ─── 方案1: Apify 抖音 Actor ───
 
 
@@ -106,6 +111,10 @@ def pypi_get_creator_videos(douyin_id: str, max_videos: int = 200) -> list[dict]
         t.start()
         t.join(timeout=60)
 
+        if t.is_alive():
+            print("  douyin-tiktok-scraper 超时（60秒）")
+            return []
+
         if error_holder[0]:
             raise error_holder[0]
 
@@ -171,7 +180,8 @@ def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=
     """获取博主视频列表 — 自动尝试多种方案"""
 
     # 先检查是否有缓存
-    cache_path = TRANSCRIPTS_DIR / f"{douyin_id}_videos.json"
+    safe_id = _sanitize_id(douyin_id)
+    cache_path = TRANSCRIPTS_DIR / f"{safe_id}_videos.json"
     if cache_path.exists():
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
@@ -268,8 +278,12 @@ def download_video_audio(video: dict, index: int) -> Path | None:
             result = subprocess.run(cmd_retry, capture_output=True, text=True, timeout=120)
 
         if result.returncode == 0:
-            for f in TEMP_DIR.glob(f"{temp_pattern}*"):
-                f.rename(output_path)
+            matched = list(TEMP_DIR.glob(f"{temp_pattern}*"))
+            if matched:
+                matched[0].rename(output_path)
+                # 清理多余的临时文件
+                for f in matched[1:]:
+                    f.unlink(missing_ok=True)
                 return output_path
 
     except FileNotFoundError:
@@ -340,7 +354,8 @@ def _normalize_video_list(items: list) -> list[dict]:
 
 def save_video_list(videos: list[dict], douyin_id: str) -> Path:
     """保存视频列表到 JSON"""
-    output_path = TRANSCRIPTS_DIR / f"{douyin_id}_videos.json"
+    safe_id = _sanitize_id(douyin_id)
+    output_path = TRANSCRIPTS_DIR / f"{safe_id}_videos.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(videos, f, ensure_ascii=False, indent=2)
     return output_path
