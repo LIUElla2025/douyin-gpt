@@ -1,6 +1,12 @@
 import os
+import re
 from pathlib import Path
 from dotenv import load_dotenv
+
+
+def sanitize_id(douyin_id: str) -> str:
+    """清理抖音号，防止路径穿越攻击"""
+    return re.sub(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]', '_', douyin_id.strip())
 
 # 从项目根目录加载 .env
 _env_path = Path(__file__).resolve().parent / ".env"

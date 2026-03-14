@@ -108,11 +108,12 @@ def _render_extraction_tab():
 
     max_videos = st.slider("最大视频数量", 10, 500, 100, step=10)
 
+    douyin_id = douyin_id.strip()
     if st.button("🚀 开始提取", type="primary", disabled=not douyin_id):
-        if not creator_name:
+        if not creator_name.strip():
             creator_name = douyin_id
 
-        _run_extraction(douyin_id, creator_name, max_videos)
+        _run_extraction(douyin_id, creator_name.strip(), max_videos)
 
     # 检查是否有从侧边栏加载的博主
     if "loaded_creator_id" in st.session_state:

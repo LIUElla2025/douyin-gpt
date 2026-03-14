@@ -166,6 +166,9 @@ class CreatorChat:
 
         # 保持历史在合理长度（最近20轮）
         recent_history = self.history[-40:]
+        # Claude API 要求消息必须以 user 角色开头
+        while recent_history and recent_history[0]["role"] != "user":
+            recent_history = recent_history[1:]
 
         try:
             response = self.client.messages.create(
@@ -174,6 +177,10 @@ class CreatorChat:
                 system=system,
                 messages=recent_history,
             )
+
+            if not response.content:
+                self.history.pop()
+                return "对话出错: 模型返回了空响应"
 
             assistant_message = response.content[0].text
             self.history.append({"role": "assistant", "content": assistant_message})

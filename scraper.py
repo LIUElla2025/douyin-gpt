@@ -11,12 +11,7 @@ import subprocess
 import re
 import threading
 from pathlib import Path
-from config import APIFY_API_TOKEN, TEMP_DIR, AUDIO_DIR, TRANSCRIPTS_DIR
-
-
-def _sanitize_id(douyin_id: str) -> str:
-    """清理抖音号，防止路径穿越攻击"""
-    return re.sub(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]', '_', douyin_id)
+from config import APIFY_API_TOKEN, TEMP_DIR, AUDIO_DIR, TRANSCRIPTS_DIR, sanitize_id
 
 
 # ─── 方案1: Apify 抖音 Actor ───
@@ -180,7 +175,7 @@ def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=
     """获取博主视频列表 — 自动尝试多种方案"""
 
     # 先检查是否有缓存
-    safe_id = _sanitize_id(douyin_id)
+    safe_id = sanitize_id(douyin_id)
     cache_path = TRANSCRIPTS_DIR / f"{safe_id}_videos.json"
     if cache_path.exists():
         try:
@@ -328,13 +323,16 @@ def _normalize_video_list(items: list) -> list[dict]:
     videos = []
     seen_ids = set()
 
-    for item in items:
+    for idx, item in enumerate(items):
         vid = str(item.get("id", item.get("aweme_id", item.get("video_id", ""))))
 
-        if vid and vid in seen_ids:
+        # 没有 ID 的视频生成合成 ID，避免合并时数据丢失
+        if not vid:
+            vid = f"_no_id_{idx}"
+
+        if vid in seen_ids:
             continue
-        if vid:
-            seen_ids.add(vid)
+        seen_ids.add(vid)
 
         video = {
             "id": vid,
@@ -354,7 +352,7 @@ def _normalize_video_list(items: list) -> list[dict]:
 
 def save_video_list(videos: list[dict], douyin_id: str) -> Path:
     """保存视频列表到 JSON"""
-    safe_id = _sanitize_id(douyin_id)
+    safe_id = sanitize_id(douyin_id)
     output_path = TRANSCRIPTS_DIR / f"{safe_id}_videos.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(videos, f, ensure_ascii=False, indent=2)

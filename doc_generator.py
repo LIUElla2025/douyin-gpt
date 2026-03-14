@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from config import OUTPUT_DIR
+from config import OUTPUT_DIR, sanitize_id
 
 
 def _set_chinese_font(style):
@@ -147,7 +147,8 @@ def generate_word_doc(
         run.font.color.rgb = RGBColor(0xDD, 0xDD, 0xDD)
 
     # 保存
-    filename = f"{douyin_id}_文字稿合集_{datetime.now().strftime('%Y%m%d')}.docx"
+    safe_id = sanitize_id(douyin_id)
+    filename = f"{safe_id}_文字稿合集_{datetime.now().strftime('%Y%m%d')}.docx"
     output_path = OUTPUT_DIR / filename
     doc.save(str(output_path))
     return output_path

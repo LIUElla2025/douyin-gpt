@@ -1,14 +1,8 @@
 """语音转文字模块 - 使用 OpenAI Whisper（延迟加载，不装 whisper 也不会崩）"""
 
 import json
-import re
 from pathlib import Path
-from config import WHISPER_MODEL, TRANSCRIPTS_DIR
-
-
-def _sanitize_id(douyin_id: str) -> str:
-    """清理抖音号，防止路径穿越攻击"""
-    return re.sub(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]', '_', douyin_id)
+from config import WHISPER_MODEL, TRANSCRIPTS_DIR, sanitize_id
 
 
 _model = None
@@ -109,7 +103,7 @@ def transcribe_all(videos: list[dict], progress_callback=None) -> list[dict]:
 
 def save_transcripts(videos: list[dict], douyin_id: str) -> Path:
     """保存转录结果到 JSON"""
-    safe_id = _sanitize_id(douyin_id)
+    safe_id = sanitize_id(douyin_id)
     output_path = TRANSCRIPTS_DIR / f"{safe_id}_transcripts.json"
 
     save_data = []
@@ -130,7 +124,7 @@ def save_transcripts(videos: list[dict], douyin_id: str) -> Path:
 
 def load_transcripts(douyin_id: str) -> list[dict] | None:
     """从文件加载已有的转录结果"""
-    safe_id = _sanitize_id(douyin_id)
+    safe_id = sanitize_id(douyin_id)
     path = TRANSCRIPTS_DIR / f"{safe_id}_transcripts.json"
     if path.exists():
         with open(path, "r", encoding="utf-8") as f:
