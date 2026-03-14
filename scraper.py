@@ -10,14 +10,61 @@ import json
 import subprocess
 import re
 import threading
+import urllib.request
+import urllib.parse
 from pathlib import Path
 from config import APIFY_API_TOKEN, TEMP_DIR, AUDIO_DIR, TRANSCRIPTS_DIR, sanitize_id
+
+
+def resolve_douyin_input(user_input: str) -> str:
+    """将用户输入（短链接、完整URL、抖音号）解析为可用的主页 URL。
+
+    返回格式: https://www.douyin.com/user/{sec_uid}
+    如果无法解析，返回原始输入构造的 URL。
+    """
+    user_input = user_input.strip()
+
+    # 如果是短链接 (v.douyin.com)
+    if "v.douyin.com" in user_input or "douyin.com/share" in user_input:
+        # 提取 URL
+        url_match = re.search(r'https?://[^\s]+', user_input)
+        if url_match:
+            short_url = url_match.group(0)
+            try:
+                req = urllib.request.Request(short_url, method='HEAD')
+                req.add_header('User-Agent', 'Mozilla/5.0')
+                resp = urllib.request.urlopen(req, timeout=10)
+                final_url = resp.url
+                # 从重定向 URL 中提取 sec_uid
+                sec_uid_match = re.search(r'sec_uid=([^&]+)', final_url)
+                if sec_uid_match:
+                    sec_uid = urllib.parse.unquote(sec_uid_match.group(1))
+                    return f"https://www.douyin.com/user/{sec_uid}"
+                # 或者从 /user/ 路径中提取
+                user_match = re.search(r'/user/([^?&]+)', final_url)
+                if user_match:
+                    return f"https://www.douyin.com/user/{user_match.group(1)}"
+            except Exception as e:
+                print(f"  短链接解析失败: {e}")
+
+    # 如果已经是完整的 douyin.com/user/ URL
+    if "douyin.com/user/" in user_input:
+        user_match = re.search(r'douyin\.com/user/([^?&\s]+)', user_input)
+        if user_match:
+            return f"https://www.douyin.com/user/{user_match.group(1)}"
+
+    # 如果是纯 sec_uid (MS4wLjABAAAA 开头)
+    if user_input.startswith("MS4wLjABAAAA"):
+        return f"https://www.douyin.com/user/{user_input}"
+
+    # 否则当作普通抖音号/UID
+    return f"https://www.douyin.com/user/{user_input}"
 
 
 # ─── 方案1: Apify 抖音 Actor ───
 
 
-def apify_get_creator_videos(douyin_id: str, max_videos: int = 200) -> list[dict]:
+def apify_get_creator_videos(douyin_id: str, max_videos: int = 200, profile_url: str = None) -> list[dict]:
     """通过 Apify 抖音专用 Actor 获取博主视频列表"""
     if not APIFY_API_TOKEN:
         raise ValueError("请设置 APIFY_API_TOKEN 环境变量")
@@ -25,18 +72,27 @@ def apify_get_creator_videos(douyin_id: str, max_videos: int = 200) -> list[dict
     from apify_client import ApifyClient
     client = ApifyClient(APIFY_API_TOKEN)
 
+    if not profile_url:
+        profile_url = f"https://www.douyin.com/user/{douyin_id}"
+
     actors = [
+        {
+            "id": "natanielsantos/douyin-scraper",
+            "input": {
+                "profileUrls": [profile_url],
+                "searchTermsOrHashtags": [],
+                "postUrls": [],
+                "maxItemsPerUrl": max_videos,
+                "profileSortFilter": "latest",
+            },
+        },
         {
             "id": "apibox/douyin-user-post-scraper",
             "input": {"userId": douyin_id, "maxItems": max_videos},
         },
         {
-            "id": "natanielsantos/douyin-scraper",
-            "input": {"profiles": [douyin_id], "resultsPerPage": max_videos},
-        },
-        {
             "id": "easyapi/douyin-video-downloader",
-            "input": {"userId": douyin_id, "maxItems": max_videos},
+            "input": {"url": profile_url, "maxItems": max_videos},
         },
     ]
 
@@ -143,11 +199,6 @@ def ytdlp_get_creator_videos(douyin_url: str) -> list[dict]:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
         if result.returncode != 0:
-            # 加 cookies 重试
-            cmd_with_cookies = cmd[:-1] + ["--cookies-from-browser", "chrome", douyin_url]
-            result = subprocess.run(cmd_with_cookies, capture_output=True, text=True, timeout=120)
-
-        if result.returncode != 0:
             return []
 
         videos = []
@@ -188,6 +239,12 @@ def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=
         except (json.JSONDecodeError, OSError):
             pass
 
+    # 解析用户输入（支持短链接、完整URL、抖音号）
+    if progress_callback:
+        progress_callback(0.02, "解析抖音链接...")
+    profile_url = resolve_douyin_input(douyin_id)
+    print(f"  解析后的主页 URL: {profile_url}")
+
     errors = []
 
     # 方案1: Apify
@@ -195,7 +252,7 @@ def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=
         if progress_callback:
             progress_callback(0.1, "尝试 Apify 抖音 Actor...")
         try:
-            videos = apify_get_creator_videos(douyin_id, max_videos)
+            videos = apify_get_creator_videos(douyin_id, max_videos, profile_url=profile_url)
             if videos:
                 if progress_callback:
                     progress_callback(1.0, f"通过 Apify 获取到 {len(videos)} 个视频")
@@ -218,9 +275,8 @@ def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=
     # 方案3: yt-dlp
     if progress_callback:
         progress_callback(0.7, "尝试 yt-dlp...")
-    douyin_url = f"https://www.douyin.com/user/{douyin_id}"
     try:
-        videos = ytdlp_get_creator_videos(douyin_url)
+        videos = ytdlp_get_creator_videos(profile_url)
         if videos:
             if progress_callback:
                 progress_callback(1.0, f"通过 yt-dlp 获取到 {len(videos)} 个视频")
@@ -254,7 +310,6 @@ def download_video_audio(video: dict, index: int) -> Path | None:
     temp_pattern = f"{index:04d}_temp"
 
     try:
-        # 先不带 cookies 尝试
         cmd = [
             "yt-dlp",
             "-x",
@@ -266,11 +321,6 @@ def download_video_audio(video: dict, index: int) -> Path | None:
             url,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-
-        if result.returncode != 0:
-            # 带 cookies 重试
-            cmd_retry = cmd[:-1] + ["--cookies-from-browser", "chrome", url]
-            result = subprocess.run(cmd_retry, capture_output=True, text=True, timeout=120)
 
         if result.returncode == 0:
             matched = list(TEMP_DIR.glob(f"{temp_pattern}*"))

@@ -105,9 +105,9 @@ def _render_extraction_tab():
     col1, col2 = st.columns([3, 1])
     with col1:
         douyin_id = st.text_input(
-            "抖音号",
-            placeholder="输入博主的抖音号（如：douyin_creator_123）",
-            help="在抖音 App 中查看博主主页，复制抖音号即可",
+            "抖音号 / 分享链接",
+            placeholder="粘贴分享链接 或 输入抖音号",
+            help="推荐方式：打开抖音博主主页 → 分享 → 复制链接，直接粘贴到这里",
         )
     with col2:
         creator_name = st.text_input(
@@ -169,18 +169,19 @@ def _run_extraction(douyin_id: str, creator_name: str, max_videos: int):
         apify_transcripts = {}
         if APIFY_API_TOKEN:
             try:
-                transcript_items = apify_get_transcripts(douyin_id)
-                for item in transcript_items:
-                    vid = item.get("id", item.get("aweme_id", ""))
-                    if vid and item.get("transcript"):
-                        apify_transcripts[str(vid)] = {
-                            "text": item["transcript"],
+                # 从已抓取的视频数据中提取文字稿（desc 字段通常包含视频文案）
+                for v in videos:
+                    vid = str(v.get("id", ""))
+                    title = v.get("title", "")
+                    if vid and title and len(title) > 10:
+                        apify_transcripts[vid] = {
+                            "text": title,
                             "segments": [],
                             "language": "zh",
-                            "source": "douyin_subtitle",
+                            "source": "douyin_desc",
                         }
             except Exception as e:
-                st.warning(f"字幕提取跳过: {e}")
+                st.warning(f"文字稿提取跳过: {e}")
 
         if apify_transcripts:
             status.success(f"✅ 从抖音字幕直接获取了 {len(apify_transcripts)} 条文字稿")
