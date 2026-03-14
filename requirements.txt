@@ -1,8 +1,13 @@
+# === 必需依赖 ===
 streamlit>=1.30.0
 apify-client>=1.6.0
-openai-whisper>=20231117
-python-docx>=1.1.0
-anthropic>=0.40.0
 python-dotenv>=1.0.0
-yt-dlp>=2024.1.0
-douyin-tiktok-scraper>=1.6.0
+
+# === 推荐依赖（功能完整需要）===
+python-docx>=1.1.0          # Word 文档生成
+anthropic>=0.40.0            # 博主 GPT 对话
+
+# === 可选依赖（大部分场景不需要）===
+# openai-whisper>=20231117   # 本地语音转文字（需要 PyTorch ~2GB）
+# yt-dlp>=2024.1.0           # 音频下载 fallback
+# douyin-tiktok-scraper>=1.6.0  # 免费爬虫 fallback

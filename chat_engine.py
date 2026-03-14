@@ -19,9 +19,10 @@ def _get_anthropic():
             )
     return _anthropic
 
-# Claude 上下文预算：system prompt 中放博主 profile 最多用 ~80K 字符
-_MAX_PROFILE_CHARS = 80000
-_MAX_CONTEXT_CHARS = 15000
+# Claude 上下文预算：中文字符 ≈ 1.5-2 tokens，需为对话历史留空间
+# Sonnet 200K tokens，system prompt 控制在 ~50K chars (≈75K tokens)，留 125K 给对话
+_MAX_PROFILE_CHARS = 40000
+_MAX_CONTEXT_CHARS = 10000
 
 
 def build_creator_profile(videos: list[dict]) -> str:

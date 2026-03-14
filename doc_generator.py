@@ -107,6 +107,13 @@ def generate_word_doc(
     doc.add_page_break()
 
     # --- 文字稿正文 ---
+    if transcribed == 0:
+        no_content = doc.add_paragraph()
+        no_content.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = no_content.add_run("暂无已转录的文字稿内容")
+        run.font.size = Pt(14)
+        run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+
     chapter_num = 0
     for video in videos:
         transcript = video.get("transcript")
@@ -114,7 +121,7 @@ def generate_word_doc(
             continue
 
         chapter_num += 1
-        title_text = video.get("title", f"视频 {chapter_num}")
+        title_text = video.get("title", f"视频 {chapter_num}")[:80]
 
         doc.add_heading(f"{chapter_num}. {title_text}", level=2)
 

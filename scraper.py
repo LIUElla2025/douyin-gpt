@@ -102,7 +102,7 @@ def pypi_get_creator_videos(douyin_id: str, max_videos: int = 200) -> list[dict]
             except Exception as e:
                 error_holder[0] = e
 
-        t = threading.Thread(target=_run_in_thread)
+        t = threading.Thread(target=_run_in_thread, daemon=True)
         t.start()
         t.join(timeout=60)
 

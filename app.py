@@ -11,22 +11,28 @@ from chat_engine import CreatorChat
 
 
 def _check_dependencies():
-    """启动时检查关键依赖"""
-    missing = []
+    """启动时检查依赖状态，返回 (必需缺失, 可选缺失)"""
+    required_missing = []
+    optional_missing = []
+
+    # 必需：没有这个完全不能用
     try:
         import apify_client  # noqa: F401
     except ImportError:
-        missing.append("apify-client")
+        required_missing.append("apify-client")
+
+    # 可选：缺失只影响部分功能
     try:
         import docx  # noqa: F401
     except ImportError:
-        missing.append("python-docx")
+        optional_missing.append("python-docx (Word文档生成需要)")
     try:
         import anthropic  # noqa: F401
     except ImportError:
-        missing.append("anthropic (对话功能需要)")
-    # whisper 不在这里检查，因为它是可选的（有抖音字幕就不需要）
-    return missing
+        optional_missing.append("anthropic (博主GPT对话需要)")
+    # whisper 不检查，因为有抖音字幕就不需要
+
+    return required_missing, optional_missing
 
 
 def main():
@@ -39,13 +45,15 @@ def main():
     st.title("🎬 抖音博主文字稿 & GPT 对话")
 
     # 启动时检查依赖
-    missing = _check_dependencies()
-    if missing:
+    required_missing, optional_missing = _check_dependencies()
+    if required_missing:
         st.error(
-            f"缺少依赖包: {', '.join(missing)}\n\n"
+            f"缺少必需依赖包: {', '.join(required_missing)}\n\n"
             "请运行: `pip install -r requirements.txt`"
         )
         return
+    if optional_missing:
+        st.warning(f"部分可选依赖未安装: {', '.join(optional_missing)}")
     st.caption("输入抖音号 → 自动提取所有视频文字稿 → 生成 Word + 博主 GPT 对话")
 
     # ─── 侧边栏：配置检查 ───
