@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)"/>
+  <!-- Play triangle (video) -->
+  <polygon points="22,18 22,46 42,32" fill="white" opacity="0.95"/>
+  <!-- Speech/AI waves radiating from play button -->
+  <path d="M44,24 Q50,28 50,32 Q50,36 44,40" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+  <path d="M48,20 Q56,26 56,32 Q56,38 48,44" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.4"/>
+</svg>

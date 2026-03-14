@@ -4,6 +4,8 @@ import streamlit as st
 from pathlib import Path
 
 from config import APIFY_API_TOKEN, ANTHROPIC_API_KEY, TRANSCRIPTS_DIR
+
+_FAVICON = Path(__file__).resolve().parent / "favicon.svg"
 from scraper import get_creator_videos, download_all_audios, save_video_list, apify_get_transcripts
 from transcriber import transcribe_all, save_transcripts, load_transcripts
 from doc_generator import generate_word_doc
@@ -38,7 +40,7 @@ def _check_dependencies():
 def main():
     st.set_page_config(
         page_title="抖音博主 GPT",
-        page_icon="🎬",
+        page_icon=str(_FAVICON) if _FAVICON.exists() else "🎬",
         layout="wide",
     )
 
