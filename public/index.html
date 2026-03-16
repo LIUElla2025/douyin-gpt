@@ -506,7 +506,7 @@ async function fetchVideosSSE(secUid, keyword) {
     const body = JSON.stringify({
       sec_uid: secUid,
       keyword: keyword,
-      max_videos: 0,
+      max_videos: 200,
     });
 
     // 使用 fetch + ReadableStream 来消费 SSE（因为 EventSource 只支持 GET）

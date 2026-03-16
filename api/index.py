@@ -142,8 +142,9 @@ def fetch_videos():
             keywords = keyword.split() if keyword else None
             all_videos = []
             max_cursor = 0
-            max_count = max_videos if max_videos > 0 else 99999
+            max_count = max_videos if max_videos > 0 else 200
             page = 0
+            fetch_start = time.time()
 
             while len(all_videos) < max_count:
                 page += 1
@@ -213,6 +214,11 @@ def fetch_videos():
                     break
 
                 time.sleep(0.3)
+
+                # 超时保护：250秒后停止（留 50 秒给 done 事件）
+                if time.time() - fetch_start > 250:
+                    yield send_event("status", {"msg": "接近超时限制，已停止获取更多视频"})
+                    break
 
             # 完成
             yield send_event("done", {
