@@ -269,14 +269,18 @@ def transcribe():
 
         try:
             req = urllib.request.Request(download_url)
-            req.add_header("User-Agent", "Mozilla/5.0")
-            resp = urllib.request.urlopen(req, timeout=60)
-            with open(tmp_path, "wb") as f:
-                f.write(resp.read())
+            req.add_header("User-Agent", _DY_UA)
+            req.add_header("Referer", "https://www.douyin.com/")
+            try:
+                resp = urllib.request.urlopen(req, timeout=60)
+                with open(tmp_path, "wb") as f:
+                    f.write(resp.read())
+            except Exception as dl_err:
+                return jsonify({"error": f"音频下载失败: {dl_err}"}), 500
 
             file_size = os.path.getsize(tmp_path)
             if file_size < 1000:
-                return jsonify({"error": "音频文件太小，可能下载失败"}), 400
+                return jsonify({"error": f"音频文件太小({file_size}字节)，URL: {download_url[:80]}"}), 400
 
             # 调用 Whisper API
             transcript = _call_whisper(tmp_path, openai_key, proxy)
@@ -287,7 +291,8 @@ def transcribe():
                 os.unlink(tmp_path)
 
     except Exception as e:
-        return jsonify({"error": f"转录失败: {e}"}), 500
+        import traceback
+        return jsonify({"error": f"转录失败: {e}", "detail": traceback.format_exc()}), 500
 
 
 # ─── 生成 Word 文档 ───
