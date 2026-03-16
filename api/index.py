@@ -323,6 +323,7 @@ def transcribe():
         return jsonify({"error": "缺少音频/视频 URL"}), 400
 
     tmp_path = None
+    extracted_audio = None
     try:
         suffix = ".mp3" if audio_url else ".mp4"
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
