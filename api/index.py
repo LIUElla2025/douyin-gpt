@@ -485,6 +485,50 @@ def generate_doc():
 # ─── 博主 GPT 对话 ───
 
 
+@app.route("/api/debug-video-fields", methods=["POST"])
+def debug_video_fields():
+    """诊断端点：返回第一个视频的完整字段结构，用于查找字幕相关字段"""
+    data = request.json or {}
+    cfg = _get_config(data)
+    sec_uid = data.get("sec_uid", "").strip()
+    cookie = cfg["cookie"]
+
+    if not sec_uid:
+        return jsonify({"error": "缺少 sec_uid"}), 400
+
+    try:
+        params = _build_base_params(sec_uid, 0, count=1)
+        resp_data = _douyin_api_request(
+            "https://www.douyin.com/aweme/v1/web/aweme/post/", params, cookie
+        )
+        aweme_list = resp_data.get("aweme_list", [])
+        if not aweme_list:
+            return jsonify({"error": "无视频数据"}), 404
+
+        item = aweme_list[0]
+        # 提取关键字段结构（不返回完整数据以避免太大）
+        video_obj = item.get("video", {})
+        result = {
+            "video_keys": list(video_obj.keys()),
+            "item_keys": list(item.keys()),
+            # 字幕相关字段
+            "subtitle": video_obj.get("subtitle"),
+            "caption": item.get("caption"),
+            "video_text": item.get("video_text"),
+            "text_extra": item.get("text_extra"),
+            "srt_subtitle": item.get("srt_subtitle"),
+            "interaction_stickers": item.get("interaction_stickers"),
+            # download_addr 是否存在
+            "has_download_addr": "download_addr" in video_obj,
+            "download_addr_keys": list(video_obj.get("download_addr", {}).keys()) if "download_addr" in video_obj else None,
+            # 视频描述
+            "desc": item.get("desc"),
+        }
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     data = request.json or {}
