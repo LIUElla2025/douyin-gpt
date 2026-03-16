@@ -170,15 +170,24 @@ def fetch_videos():
                     duration = item.get("video", {}).get("duration", 0)
                     if isinstance(duration, (int, float)) and duration > 10000:
                         duration = duration // 1000
-                    # 视频下载URL（取最低码率，减小文件体积）
-                    bit_rates = item.get("video", {}).get("bit_rate", [])
+                    # 视频下载URL：优先用 play_addr（标准播放地址，含音频），
+                    # 其次用最低码率 bit_rate
+                    video_obj = item.get("video", {})
                     video_download_url = ""
-                    if bit_rates:
-                        lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
-                        play_addr = lowest.get("play_addr", {})
-                        vurl_list = play_addr.get("url_list", [])
-                        video_download_url = vurl_list[0] if vurl_list else ""
-                    # 背景音乐URL（备选）
+                    # 方式1: play_addr（标准，保证有音频轨道）
+                    play_addr = video_obj.get("play_addr", {})
+                    pa_list = play_addr.get("url_list", [])
+                    if pa_list:
+                        video_download_url = pa_list[0]
+                    # 方式2: 最低码率（备选，文件更小但可能无音轨）
+                    if not video_download_url:
+                        bit_rates = video_obj.get("bit_rate", [])
+                        if bit_rates:
+                            lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
+                            br_addr = lowest.get("play_addr", {})
+                            br_list = br_addr.get("url_list", [])
+                            video_download_url = br_list[0] if br_list else ""
+                    # 背景音乐URL（最后备选）
                     music = item.get("music", {})
                     play_url_list = (music.get("play_url") or {}).get("url_list", [])
                     audio_url = play_url_list[0] if play_url_list else ""
@@ -318,7 +327,31 @@ def transcribe():
         if file_size < 1000:
             return jsonify({"error": f"音频文件太小({file_size}字节)"}), 400
         if file_size > 25 * 1024 * 1024:
-            return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper 限制 25MB"}), 400
+            # 视频文件超过 25MB，尝试用 audio_url（背景音乐+口述混合）
+            if download_url != audio_url and audio_url:
+                try:
+                    req = urllib.request.Request(audio_url)
+                    req.add_header("User-Agent", _DY_UA)
+                    req.add_header("Referer", "https://www.douyin.com/")
+                    if cookie:
+                        req.add_header("Cookie", cookie)
+                    if proxy:
+                        ph = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                        opener = urllib.request.build_opener(ph)
+                        resp = opener.open(req, timeout=90)
+                    else:
+                        resp = urllib.request.urlopen(req, timeout=90)
+                    with open(tmp_path, "wb") as f:
+                        while True:
+                            chunk = resp.read(8192)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    file_size = os.path.getsize(tmp_path)
+                except Exception:
+                    pass
+            if file_size > 25 * 1024 * 1024:
+                return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper 限制 25MB"}), 400
 
         # 验证文件是否为有效的音视频（非 HTML 错误页面）
         with open(tmp_path, "rb") as f:
@@ -718,15 +751,21 @@ def _fetch_videos_direct(
             duration = item.get("video", {}).get("duration", 0)
             if isinstance(duration, (int, float)) and duration > 10000:
                 duration = duration // 1000
-            # 视频下载URL（取最低码率，减小文件体积）
-            bit_rates = item.get("video", {}).get("bit_rate", [])
+            # 视频下载URL：优先 play_addr，其次最低码率
+            video_obj = item.get("video", {})
             video_download_url = ""
-            if bit_rates:
-                lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
-                play_addr = lowest.get("play_addr", {})
-                vurl_list = play_addr.get("url_list", [])
-                video_download_url = vurl_list[0] if vurl_list else ""
-            # 背景音乐URL（备选）
+            play_addr = video_obj.get("play_addr", {})
+            pa_list = play_addr.get("url_list", [])
+            if pa_list:
+                video_download_url = pa_list[0]
+            if not video_download_url:
+                bit_rates = video_obj.get("bit_rate", [])
+                if bit_rates:
+                    lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
+                    br_addr = lowest.get("play_addr", {})
+                    br_list = br_addr.get("url_list", [])
+                    video_download_url = br_list[0] if br_list else ""
+            # 背景音乐URL（最后备选）
             music = item.get("music", {})
             play_url_list = (music.get("play_url") or {}).get("url_list", [])
             audio_url = play_url_list[0] if play_url_list else ""
