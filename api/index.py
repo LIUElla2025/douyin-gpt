@@ -801,47 +801,61 @@ def _normalize_video_list(items: list) -> list[dict]:
 
 
 def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
-    """调用 OpenAI Whisper API"""
-    import httpx
-    from openai import OpenAI
+    """调用 OpenAI Whisper API（直接 HTTP，不依赖 openai/httpx SDK）"""
+    import mimetypes
+    import ssl
+    import urllib.error
 
-    client_kwargs = {"api_key": api_key}
-    if proxy:
-        client_kwargs["http_client"] = httpx.Client(
-            proxy=proxy, timeout=httpx.Timeout(300, connect=120)
-        )
-    else:
-        client_kwargs["http_client"] = httpx.Client(
-            timeout=httpx.Timeout(300, connect=120)
-        )
+    boundary = "----WhisperBoundary" + "".join(random.choices(string.ascii_letters, k=16))
+    filename = os.path.basename(audio_path)
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
-    client = OpenAI(**client_kwargs)
-
+    # 构建 multipart body
+    body_parts = []
+    # model
+    body_parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-1".encode())
+    # language
+    body_parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\nzh".encode())
+    # response_format
+    body_parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\nverbose_json".encode())
+    # timestamp_granularities[]
+    body_parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"timestamp_granularities[]\"\r\n\r\nsegment".encode())
+    # prompt
+    body_parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\n以下是普通话的句子，包含标点符号。".encode())
+    # file
     with open(audio_path, "rb") as f:
-        response = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=f,
-            language="zh",
-            response_format="verbose_json",
-            timestamp_granularities=["segment"],
-            prompt="以下是普通话的句子，包含标点符号。",
-        )
+        file_data = f.read()
+    body_parts.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n".encode()
+        + file_data
+    )
+    body_parts.append(f"--{boundary}--\r\n".encode())
+    body = b"\r\n".join(body_parts)
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/audio/transcriptions",
+        data=body,
+        method="POST",
+    )
+    req.add_header("Authorization", f"Bearer {api_key}")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+
+    ctx = ssl.create_default_context()
+    resp = urllib.request.urlopen(req, timeout=300, context=ctx)
+    result = json.loads(resp.read().decode())
 
     segments = []
-    for seg in getattr(response, "segments", []) or []:
-        start = seg.start if hasattr(seg, "start") else seg.get("start", 0)
-        end = seg.end if hasattr(seg, "end") else seg.get("end", 0)
-        text = seg.text if hasattr(seg, "text") else seg.get("text", "")
+    for seg in result.get("segments", []):
         segments.append({
-            "start": round(start, 2),
-            "end": round(end, 2),
-            "text": text.strip(),
+            "start": round(seg.get("start", 0), 2),
+            "end": round(seg.get("end", 0), 2),
+            "text": seg.get("text", "").strip(),
         })
 
     return {
-        "text": response.text.strip(),
+        "text": result.get("text", "").strip(),
         "segments": segments,
-        "language": getattr(response, "language", "zh"),
+        "language": result.get("language", "zh"),
     }
 
 
