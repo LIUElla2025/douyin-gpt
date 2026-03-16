@@ -149,7 +149,7 @@ def fetch_videos():
             while len(all_videos) < max_count:
                 page += 1
                 yield send_event("status", {
-                    "msg": f"获取第 {page} 页...",
+                    "msg": f"扫描第 {page} 页（已扫描 {total_scanned} 个，匹配 {len(all_videos)} 个）...",
                     "fetched": len(all_videos),
                     "total": total_videos,
                 })
