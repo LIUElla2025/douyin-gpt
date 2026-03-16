@@ -406,11 +406,12 @@ def transcribe():
             or header[:4] == b"fLaC"                 # FLAC
         )
         if not is_valid_media:
-            # 下载到的是非媒体文件（可能是 HTML 错误页），尝试回退到 audio_url
-            if download_url == video_download_url and audio_url:
+            # 下载到的是非媒体文件（可能是 HTML 错误页），尝试回退到另一个 URL
+            fallback_url = video_download_url if download_url == audio_url else audio_url
+            if fallback_url and fallback_url != download_url:
                 # 用 audio_url 重新下载（带代理）
                 try:
-                    req = urllib.request.Request(audio_url)
+                    req = urllib.request.Request(fallback_url)
                     req.add_header("User-Agent", _DY_UA)
                     req.add_header("Referer", "https://www.douyin.com/")
                     if cookie:
@@ -432,9 +433,9 @@ def transcribe():
                     # 重新检查
                     file_size = os.path.getsize(tmp_path)
                     if file_size < 1000:
-                        return jsonify({"error": "视频和音频 URL 均无法下载有效文件"}), 400
+                        return jsonify({"error": "主URL和备用URL均无法下载有效文件"}), 400
                 except Exception as e:
-                    return jsonify({"error": f"视频下载无效，音频回退也失败: {e}"}), 500
+                    return jsonify({"error": f"主URL下载无效，回退也失败: {e}"}), 500
             else:
                 snippet = header[:50].decode("utf-8", errors="replace")
                 return jsonify({"error": f"下载的文件不是有效音视频格式（开头: {snippet[:80]}）"}), 400

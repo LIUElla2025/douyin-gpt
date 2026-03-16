@@ -591,10 +591,7 @@ async function fetchVideosSSE(secUid, keyword) {
     round++;
     const result = await _fetchVideosOnce(secUid, keyword, resumeCursor, resumePage, totalScanned);
 
-    // 累加本轮结果（续传时 done 里只有本轮的视频）
-    if (resumeCursor && result.videos) {
-      result.videos.forEach(v => STATE.videos.push(v));
-    }
+    // 续传时视频已通过 SSE 'videos' 事件实时 push 到 STATE.videos，无需重复添加
 
     totalScanned = result.total_scanned || totalScanned;
     STATE._totalScanned = totalScanned;
