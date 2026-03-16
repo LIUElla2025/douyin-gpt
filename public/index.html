@@ -578,16 +578,52 @@ function restoreTranscripts(videos) {
   return count;
 }
 
-// ─── SSE 获取视频列表 ───
+// ─── SSE 获取视频列表（支持超时自动续传）───
 async function fetchVideosSSE(secUid, keyword) {
-  return new Promise((resolve, reject) => {
-    STATE.videos = [];
-    STATE.creatorName = '';
+  STATE.videos = [];
+  STATE.creatorName = '';
+  let resumeCursor = 0;
+  let resumePage = 0;
+  let totalScanned = 0;
+  let round = 0;
 
+  while (true) {
+    round++;
+    const result = await _fetchVideosOnce(secUid, keyword, resumeCursor, resumePage, totalScanned);
+
+    // 累加本轮结果（续传时 done 里只有本轮的视频）
+    if (resumeCursor && result.videos) {
+      result.videos.forEach(v => STATE.videos.push(v));
+    }
+
+    totalScanned = result.total_scanned || totalScanned;
+    STATE._totalScanned = totalScanned;
+    STATE._stopReason = result.stop_reason || '';
+
+    // 如果是超时且有续传游标，自动继续
+    if (result.stop_reason === 'timeout' && result.resume_cursor) {
+      resumeCursor = result.resume_cursor;
+      resumePage = result.resume_page || 0;
+      addTitle(`⏳ 第 ${round} 轮扫描超时，已扫描 ${totalScanned} 个，自动续传...`, 'info');
+      continue;
+    }
+
+    // 正常结束
+    break;
+  }
+
+  return { videos: STATE.videos, creator_name: STATE.creatorName };
+}
+
+function _fetchVideosOnce(secUid, keyword, startCursor, startPage, prevScanned) {
+  return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       sec_uid: secUid,
       keyword: keyword,
       max_videos: 0,
+      start_cursor: startCursor,
+      start_page: startPage,
+      prev_scanned: prevScanned,
     });
 
     fetch('/api/fetch-videos', {
@@ -629,22 +665,25 @@ async function fetchVideosSSE(secUid, keyword) {
             setProgress(8 + Math.min((data.fetched / data.total) * 12, 12));
           }
         } else if (type === 'profile') {
-          STATE.creatorName = data.creator_name || '博主';
-          addTitle(`博主：${STATE.creatorName}（共 ${data.total_videos} 个视频）`, 'success');
+          STATE.creatorName = data.creator_name || STATE.creatorName || '博主';
+          if (!startCursor) {
+            addTitle(`博主：${STATE.creatorName}（共 ${data.total_videos} 个视频）`, 'success');
+          }
         } else if (type === 'videos') {
           data.videos.forEach(v => {
             STATE.videos.push(v);
             addTitle('▸ ' + v.title.substring(0, 50));
           });
-          setStatus(`已获取 ${data.fetched}/${data.total} 个视频...`, 'info');
+          setStatus(`已获取 ${data.fetched}/${data.total} 个匹配视频...`, 'info');
           if (data.total > 0) {
             setProgress(8 + Math.min((data.fetched / data.total) * 12, 12));
           }
         } else if (type === 'done') {
-          STATE.videos = data.videos;
+          // 首轮：done里有完整视频列表；续传轮：只有本轮新增的
+          if (!startCursor) {
+            STATE.videos = data.videos;
+          }
           STATE.creatorName = data.creator_name || STATE.creatorName;
-          STATE._totalScanned = data.total_scanned || 0;
-          STATE._stopReason = data.stop_reason || '';
           resolve(data);
         } else if (type === 'error') {
           reject(new Error(data.error));
@@ -655,7 +694,7 @@ async function fetchVideosSSE(secUid, keyword) {
         return reader.read().then(({ done, value }) => {
           if (done) {
             if (buffer) processSSE('\n');
-            if (!STATE.videos.length) reject(new Error('未获取到视频'));
+            if (!STATE.videos.length && !startCursor) reject(new Error('未获取到视频'));
             else resolve({ videos: STATE.videos, creator_name: STATE.creatorName });
             return;
           }

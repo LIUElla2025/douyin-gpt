@@ -112,6 +112,10 @@ def fetch_videos():
     cookie = cfg["cookie"]
     keyword = data.get("keyword", "").strip()
     max_videos = data.get("max_videos", 0)
+    # 续传参数：从上次超时的位置继续扫描
+    start_cursor = data.get("start_cursor", 0)
+    start_page = data.get("start_page", 0)
+    prev_scanned = data.get("prev_scanned", 0)
 
     if not sec_uid:
         return jsonify({"error": "缺少 sec_uid"}), 400
@@ -137,15 +141,20 @@ def fetch_videos():
                 "total_videos": total_videos,
             })
 
-            # 第二步：逐页获取视频
+            # 第二步：逐页获取视频（支持从 start_cursor 续传）
             keywords = keyword.split() if keyword else None
             all_videos = []
-            total_scanned = 0
-            max_cursor = 0
+            total_scanned = prev_scanned
+            max_cursor = start_cursor
             max_count = max_videos if max_videos > 0 else 9999
-            page = 0
+            page = start_page
             total_pages = max(1, -(-total_videos // 35))  # ceil division
             fetch_start = time.time()
+
+            if start_cursor:
+                yield send_event("status", {
+                    "msg": f"从第 {page + 1} 页续传扫描...",
+                })
 
             stop_reason = "已扫描全部视频"
             while len(all_videos) < max_count:
@@ -251,14 +260,14 @@ def fetch_videos():
 
                 time.sleep(0.3)
 
-                # 超时保护：250秒后停止（留 50 秒给 done 事件）
+                # 超时保护：250秒后停止，返回游标供前端续传
                 if time.time() - fetch_start > 250:
-                    stop_reason = f"超时保护（已运行250秒）"
-                    yield send_event("status", {"msg": "接近超时限制，已停止获取更多视频"})
+                    stop_reason = "timeout"
+                    yield send_event("status", {"msg": f"本轮超时，已扫描 {total_scanned} 个，准备续传..."})
                     break
 
-            # 完成
-            yield send_event("done", {
+            # 完成（包含续传信息）
+            done_data = {
                 "videos": all_videos,
                 "creator_name": creator_name,
                 "total": len(all_videos),
@@ -266,7 +275,12 @@ def fetch_videos():
                 "total_pages_scanned": page,
                 "stop_reason": stop_reason,
                 "method": "direct",
-            })
+            }
+            # 超时时返回续传游标
+            if stop_reason == "timeout":
+                done_data["resume_cursor"] = max_cursor
+                done_data["resume_page"] = page
+            yield send_event("done", done_data)
 
         except Exception as e:
             yield send_event("error", {"error": str(e)})
