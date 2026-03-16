@@ -1160,7 +1160,7 @@ def _polish_transcript(raw_text: str, api_key: str) -> str:
     req.add_header("Content-Type", "application/json")
 
     ctx = ssl.create_default_context()
-    resp = urllib.request.urlopen(req, timeout=60, context=ctx)
+    resp = urllib.request.urlopen(req, timeout=30, context=ctx)
     result = json.loads(resp.read().decode())
 
     choices = result.get("choices", [])

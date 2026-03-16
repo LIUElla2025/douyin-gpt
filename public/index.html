@@ -888,6 +888,7 @@ async function doTranscription() {
   addTitle(`需要转录 ${todo.length} 个视频...`, 'success');
 
   let ok = cached, fail = 0;
+  const MAX_RETRIES = 3;
   for (let i = 0; i < todo.length; i++) {
     const v = todo[i];
     const pct = 20 + ((cached + i) / queue.length) * 70;
@@ -895,16 +896,26 @@ async function doTranscription() {
     setStatus(`转录 ${cached + i + 1}/${queue.length}：${v.title.substring(0, 25)}...`, 'info');
     addTitle(`转录中：${v.title.substring(0, 45)}`, 'active');
 
-    try {
-      const res = await api('transcribe', { video_download_url: v.video_download_url, audio_url: v.audio_url, video_url: v.url });
-      v.transcript = res.transcript;
-      saveTranscript(v.id, res.transcript);
-      ok++;
-      addTitle(`完成：${v.title.substring(0, 45)}`, 'success');
-    } catch (e) {
-      fail++;
-      v.transcript = null;
-      addTitle(`失败：${v.title.substring(0, 40)} - ${e.message}`, 'error');
+    let success = false;
+    for (let retry = 0; retry < MAX_RETRIES; retry++) {
+      try {
+        const res = await api('transcribe', { video_download_url: v.video_download_url, audio_url: v.audio_url, video_url: v.url });
+        v.transcript = res.transcript;
+        saveTranscript(v.id, res.transcript);
+        ok++;
+        addTitle(`完成：${v.title.substring(0, 45)}`, 'success');
+        success = true;
+        break;
+      } catch (e) {
+        if (retry < MAX_RETRIES - 1) {
+          addTitle(`重试(${retry + 1}/${MAX_RETRIES})：${v.title.substring(0, 35)} - ${e.message}`, 'info');
+          await new Promise(r => setTimeout(r, 2000 * (retry + 1)));
+        } else {
+          fail++;
+          v.transcript = null;
+          addTitle(`失败：${v.title.substring(0, 40)} - ${e.message}`, 'error');
+        }
+      }
     }
   }
 
