@@ -330,15 +330,9 @@
       <label>抖音博主链接</label>
       <input type="text" id="douyinUrl" placeholder="粘贴抖音主页链接、短链接或抖音号">
     </div>
-    <div class="row">
-      <div class="form-group">
-        <label>关键词筛选</label>
-        <input type="text" id="keyword" placeholder="可选，空格分隔多个关键词">
-      </div>
-      <div class="form-group">
-        <label>视频数量</label>
-        <input type="number" id="maxVideos" value="0" min="0" placeholder="0 = 全部">
-      </div>
+    <div class="form-group">
+      <label>关键词筛选</label>
+      <input type="text" id="keyword" placeholder="可选，空格分隔多个关键词">
     </div>
     <button class="btn btn-primary" id="startBtn" onclick="startExtraction()">
       开始提取
@@ -465,7 +459,7 @@ async function startExtraction() {
     const result = await api('fetch-videos', {
       sec_uid: STATE.secUid,
       keyword: $('keyword').value.trim(),
-      max_videos: parseInt($('maxVideos').value) || 0,
+      max_videos: 0,
     });
 
     STATE.videos = result.videos;
