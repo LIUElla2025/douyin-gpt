@@ -171,6 +171,14 @@ def fetch_videos():
                     duration = item.get("video", {}).get("duration", 0)
                     if isinstance(duration, (int, float)) and duration > 10000:
                         duration = duration // 1000
+                    # 视频下载URL（含口述音频）
+                    bit_rates = item.get("video", {}).get("bit_rate", [])
+                    video_download_url = ""
+                    if bit_rates:
+                        play_addr = bit_rates[0].get("play_addr", {})
+                        vurl_list = play_addr.get("url_list", [])
+                        video_download_url = vurl_list[0] if vurl_list else ""
+                    # 背景音乐URL（备选）
                     music = item.get("music", {})
                     play_url_list = (music.get("play_url") or {}).get("url_list", [])
                     audio_url = play_url_list[0] if play_url_list else ""
@@ -185,6 +193,7 @@ def fetch_videos():
                         "create_time": create_time,
                         "duration": duration,
                         "author": author,
+                        "video_download_url": video_download_url,
                         "audio_url": audio_url,
                         "creator_name": creator_name,
                     }
@@ -249,6 +258,7 @@ def fetch_videos():
 def transcribe():
     data = request.json or {}
     cfg = _get_config(data)
+    video_download_url = data.get("video_download_url", "").strip()
     audio_url = data.get("audio_url", "").strip()
     video_url = data.get("video_url", "").strip()
     openai_key = cfg["openai_api_key"]
@@ -257,13 +267,15 @@ def transcribe():
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
-    download_url = audio_url or video_url
+    # 优先用视频文件（含口述），其次背景音乐，最后视频页面URL
+    download_url = video_download_url or audio_url or video_url
     if not download_url:
         return jsonify({"error": "缺少音频/视频 URL"}), 400
 
     tmp_path = None
     try:
-        tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+        suffix = ".mp4" if video_download_url else ".mp3"
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         tmp_path = tmp.name
         tmp.close()
 
@@ -645,6 +657,14 @@ def _fetch_videos_direct(
             duration = item.get("video", {}).get("duration", 0)
             if isinstance(duration, (int, float)) and duration > 10000:
                 duration = duration // 1000
+            # 视频下载URL（含口述音频）
+            bit_rates = item.get("video", {}).get("bit_rate", [])
+            video_download_url = ""
+            if bit_rates:
+                play_addr = bit_rates[0].get("play_addr", {})
+                vurl_list = play_addr.get("url_list", [])
+                video_download_url = vurl_list[0] if vurl_list else ""
+            # 背景音乐URL（备选）
             music = item.get("music", {})
             play_url_list = (music.get("play_url") or {}).get("url_list", [])
             audio_url = play_url_list[0] if play_url_list else ""
@@ -659,6 +679,7 @@ def _fetch_videos_direct(
                 "create_time": create_time,
                 "duration": duration,
                 "author": author,
+                "video_download_url": video_download_url,
                 "audio_url": audio_url,
                 "creator_name": creator_name,
             }

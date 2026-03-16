@@ -627,7 +627,7 @@ async function startExtraction() {
     }
 
     // 转录阶段
-    const queue = STATE.videos.filter(v => v.audio_url);
+    const queue = STATE.videos.filter(v => v.video_download_url || v.audio_url);
     if (!queue.length) {
       setStatus('没有可转录的视频', 'warning');
       showResults();
@@ -645,7 +645,7 @@ async function startExtraction() {
       addTitle(`转录中: ${v.title.substring(0, 45)}`, 'active');
 
       try {
-        const res = await api('transcribe', { audio_url: v.audio_url, video_url: v.url });
+        const res = await api('transcribe', { video_download_url: v.video_download_url, audio_url: v.audio_url, video_url: v.url });
         v.transcript = res.transcript;
         ok++;
         addTitle(`完成: ${v.title.substring(0, 45)}`, 'success');
