@@ -232,27 +232,21 @@
 </header>
 
 <div class="container">
-  <!-- 配置卡片 -->
-  <div class="card">
+  <!-- 配置卡片（服务端已配置的项会自动隐藏） -->
+  <div class="card hidden" id="configCard">
     <h2 class="collapsible-header" onclick="toggleSection('configBody')">
       ⚙️ 配置 <span style="font-size:12px;color:#999">(点击展开/收起)</span>
     </h2>
     <div id="configBody">
-      <div class="form-group">
-        <label>抖音 Cookie *（用于获取视频列表）</label>
+      <div class="form-group" id="cookieGroup">
+        <label>抖音 Cookie（用于获取视频列表）</label>
         <textarea id="cookie" placeholder="从浏览器开发者工具复制抖音 Cookie..." rows="2"></textarea>
       </div>
-      <div class="row">
-        <div class="form-group">
-          <label>OpenAI API Key *（用于语音转文字）</label>
-          <input type="password" id="openaiKey" placeholder="sk-...">
-        </div>
-        <div class="form-group">
-          <label>代理地址（可选）</label>
-          <input type="text" id="proxy" placeholder="http://127.0.0.1:7890">
-        </div>
+      <div class="form-group" id="openaiKeyGroup">
+        <label>OpenAI API Key（用于语音转文字）</label>
+        <input type="password" id="openaiKey" placeholder="sk-...">
       </div>
-      <div class="toggle-row">
+      <div class="toggle-row" id="apifyToggleGroup">
         <input type="checkbox" id="useApify">
         <label for="useApify">使用 Apify 获取视频（需要 Token）</label>
       </div>
@@ -262,6 +256,8 @@
       </div>
     </div>
   </div>
+  <!-- 服务端配置状态提示 -->
+  <div class="status status-success hidden" id="serverConfigMsg" style="margin-bottom:16px"></div>
 
   <!-- 输入卡片 -->
   <div class="card">
@@ -327,6 +323,7 @@ let STATE = {
   secUid: '',
   startTime: null,
   timerInterval: null,
+  serverConfig: { has_openai_key: false, has_cookie: false, has_apify_token: false },
 };
 
 // ─── 工具函数 ───
@@ -409,12 +406,12 @@ async function startExtraction() {
   const useApify = $('useApify').checked;
   const apifyToken = $('apifyToken').value.trim();
 
-  if (!cookie && !useApify) return alert('请输入抖音 Cookie 或启用 Apify');
-  if (!openaiKey) return alert('请输入 OpenAI API Key');
+  // 只在服务端没配置时才要求用户输入
+  if (!cookie && !STATE.serverConfig.has_cookie && !useApify) return alert('请输入抖音 Cookie 或启用 Apify');
+  if (!openaiKey && !STATE.serverConfig.has_openai_key) return alert('请输入 OpenAI API Key');
 
   const keyword = $('keyword').value.trim();
   const maxVideos = parseInt($('maxVideos').value) || 0;
-  const proxy = $('proxy').value.trim();
 
   // 禁用按钮
   $('startBtn').disabled = true;
@@ -490,7 +487,6 @@ async function startExtraction() {
           audio_url: v.audio_url,
           video_url: v.url,
           openai_api_key: openaiKey,
-          proxy: proxy,
         });
         v.transcript = result.transcript;
         success++;
@@ -595,9 +591,6 @@ async function sendChat() {
   const msg = input.value.trim();
   if (!msg) return;
 
-  const openaiKey = $('openaiKey').value.trim();
-  if (!openaiKey) return alert('请先填写 OpenAI API Key');
-
   input.value = '';
   const messages = $('chatMessages');
 
@@ -621,8 +614,7 @@ async function sendChat() {
       creator_name: STATE.creatorName,
       videos_context: STATE.videos,
       history: chatHistory,
-      openai_api_key: openaiKey,
-      proxy: $('proxy').value.trim(),
+      openai_api_key: $('openaiKey').value.trim(),
     });
 
     chatHistory.push({ role: 'user', content: msg });
@@ -636,15 +628,57 @@ async function sendChat() {
   messages.scrollTop = messages.scrollHeight;
 }
 
-// ─── 页面加载时从 localStorage 恢复配置 ───
-window.addEventListener('load', () => {
+// ─── 页面加载：检查服务端配置 + 恢复本地配置 ───
+window.addEventListener('load', async () => {
+  // 检查服务端已配置哪些 Key
+  try {
+    const resp = await fetch('/api/config-status');
+    if (resp.ok) {
+      STATE.serverConfig = await resp.json();
+
+      const configured = [];
+      if (STATE.serverConfig.has_cookie) {
+        hide('cookieGroup');
+        configured.push('抖音 Cookie');
+      }
+      if (STATE.serverConfig.has_openai_key) {
+        hide('openaiKeyGroup');
+        configured.push('OpenAI API Key');
+      }
+      if (STATE.serverConfig.has_apify_token) {
+        hide('apifyToggleGroup');
+        configured.push('Apify Token');
+      }
+
+      // 如果所有 Key 都已配置，隐藏整个配置卡片
+      const allConfigured = STATE.serverConfig.has_cookie && STATE.serverConfig.has_openai_key;
+      if (allConfigured) {
+        hide('configCard');
+        const msgEl = $('serverConfigMsg');
+        msgEl.textContent = '✅ 服务端已配置: ' + configured.join('、') + '（直接使用即可）';
+        msgEl.classList.remove('hidden');
+      } else {
+        // 还有未配置的项，显示配置卡片
+        show('configCard');
+        if (configured.length > 0) {
+          const msgEl = $('serverConfigMsg');
+          msgEl.textContent = '✅ 服务端已配置: ' + configured.join('、');
+          msgEl.classList.remove('hidden');
+        }
+      }
+    }
+  } catch(e) {
+    // API 不可用时显示全部配置项
+    show('configCard');
+  }
+
+  // 从 localStorage 恢复未配置的项
   const saved = localStorage.getItem('douyin-gpt-config');
   if (saved) {
     try {
       const config = JSON.parse(saved);
-      if (config.cookie) $('cookie').value = config.cookie;
-      if (config.openaiKey) $('openaiKey').value = config.openaiKey;
-      if (config.proxy) $('proxy').value = config.proxy;
+      if (config.cookie && !STATE.serverConfig.has_cookie) $('cookie').value = config.cookie;
+      if (config.openaiKey && !STATE.serverConfig.has_openai_key) $('openaiKey').value = config.openaiKey;
       if (config.apifyToken) $('apifyToken').value = config.apifyToken;
     } catch(e) {}
   }
@@ -655,7 +689,6 @@ window.addEventListener('beforeunload', () => {
   const config = {
     cookie: $('cookie').value,
     openaiKey: $('openaiKey').value,
-    proxy: $('proxy').value,
     apifyToken: $('apifyToken').value,
   };
   localStorage.setItem('douyin-gpt-config', JSON.stringify(config));

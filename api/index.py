@@ -24,6 +24,22 @@ from flask import Flask, Response, jsonify, request, send_file
 
 app = Flask(__name__)
 
+# ─── 从 Vercel 环境变量读取默认配置 ───
+_ENV_OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+_ENV_COOKIE = os.environ.get("DOUYIN_COOKIE", "")
+_ENV_APIFY_TOKEN = os.environ.get("APIFY_API_TOKEN", "")
+_ENV_PROXY = os.environ.get("PROXY", "")
+
+
+def _get_config(data: dict) -> dict:
+    """合并请求参数和环境变量，环境变量作为默认值"""
+    return {
+        "openai_api_key": data.get("openai_api_key", "").strip() or _ENV_OPENAI_KEY,
+        "cookie": data.get("cookie", "").strip() or _ENV_COOKIE,
+        "apify_token": data.get("apify_token", "").strip() or _ENV_APIFY_TOKEN,
+        "proxy": data.get("proxy", "").strip() or _ENV_PROXY,
+    }
+
 
 # ─── CORS ───
 
@@ -47,6 +63,17 @@ def handle_options(path):
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "timestamp": datetime.utcnow().isoformat()})
+
+
+@app.route("/api/config-status", methods=["GET"])
+def config_status():
+    """返回服务端已配置哪些 Key（不暴露值，只返回 bool）"""
+    return jsonify({
+        "has_openai_key": bool(_ENV_OPENAI_KEY),
+        "has_cookie": bool(_ENV_COOKIE),
+        "has_apify_token": bool(_ENV_APIFY_TOKEN),
+        "has_proxy": bool(_ENV_PROXY),
+    })
 
 
 # ─── 解析抖音链接 ───
@@ -73,12 +100,13 @@ def resolve_url():
 @app.route("/api/fetch-videos", methods=["POST"])
 def fetch_videos():
     data = request.json or {}
+    cfg = _get_config(data)
     sec_uid = data.get("sec_uid", "").strip()
-    cookie = data.get("cookie", "").strip()
+    cookie = cfg["cookie"]
     keyword = data.get("keyword", "").strip()
     max_videos = data.get("max_videos", 0)
     use_apify = data.get("use_apify", False)
-    apify_token = data.get("apify_token", "").strip()
+    apify_token = cfg["apify_token"]
 
     if not sec_uid:
         return jsonify({"error": "缺少 sec_uid"}), 400
@@ -126,10 +154,11 @@ def fetch_videos():
 @app.route("/api/transcribe", methods=["POST"])
 def transcribe():
     data = request.json or {}
+    cfg = _get_config(data)
     audio_url = data.get("audio_url", "").strip()
     video_url = data.get("video_url", "").strip()
-    openai_key = data.get("openai_api_key", "").strip()
-    proxy = data.get("proxy", "").strip()
+    openai_key = cfg["openai_api_key"]
+    proxy = cfg["proxy"]
 
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
@@ -200,12 +229,13 @@ def generate_doc():
 @app.route("/api/chat", methods=["POST"])
 def chat():
     data = request.json or {}
+    cfg = _get_config(data)
     message = data.get("message", "").strip()
     creator_name = data.get("creator_name", "博主")
     videos_context = data.get("videos_context", [])
     history = data.get("history", [])
-    openai_key = data.get("openai_api_key", "").strip()
-    proxy = data.get("proxy", "").strip()
+    openai_key = cfg["openai_api_key"]
+    proxy = cfg["proxy"]
 
     if not message:
         return jsonify({"error": "消息不能为空"}), 400
