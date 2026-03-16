@@ -532,16 +532,22 @@ async function api(endpoint, body) {
 // ─── 缓存系统（视频列表 + 转录结果）───
 const CACHE_PREFIX = 'dy-';
 
-function saveVideoList(secUid, videos, creatorName) {
+function _cacheKey(secUid, keyword) {
+  // 缓存 key = sec_uid + 关键词，不同关键词搜索不会冲突
+  const kw = (keyword || '').trim();
+  return CACHE_PREFIX + 'videos-' + secUid + (kw ? '-kw-' + kw : '');
+}
+
+function saveVideoList(secUid, videos, creatorName, keyword) {
   try {
-    const data = { videos, creatorName, savedAt: Date.now() };
-    localStorage.setItem(CACHE_PREFIX + 'videos-' + secUid, JSON.stringify(data));
+    const data = { videos, creatorName, keyword: (keyword || '').trim(), savedAt: Date.now() };
+    localStorage.setItem(_cacheKey(secUid, keyword), JSON.stringify(data));
   } catch(e) {}
 }
 
-function loadVideoList(secUid) {
+function loadVideoList(secUid, keyword) {
   try {
-    const raw = localStorage.getItem(CACHE_PREFIX + 'videos-' + secUid);
+    const raw = localStorage.getItem(_cacheKey(secUid, keyword));
     if (!raw) return null;
     const data = JSON.parse(raw);
     // 缓存 7 天有效
@@ -675,14 +681,16 @@ async function startExtraction() {
     const resolved = await api('resolve-url', { input: url });
     STATE.secUid = resolved.sec_uid;
 
-    // 检查是否有缓存
-    const cached = loadVideoList(STATE.secUid);
+    // 检查是否有缓存（含关键词匹配）
+    const kw = $('keyword').value.trim();
+    const cached = loadVideoList(STATE.secUid, kw);
     if (cached && cached.videos.length > 0) {
       const transcribed = restoreTranscripts(cached.videos);
       const remaining = cached.videos.filter(v => !v.transcript && (v.video_download_url || v.audio_url)).length;
+      const kwInfo = cached.keyword ? `，关键词「${cached.keyword}」` : '';
 
       $('resumeInfo').textContent =
-        `发现「${cached.creatorName}」的缓存：${cached.videos.length} 个视频，` +
+        `发现「${cached.creatorName}」的缓存${kwInfo}：${cached.videos.length} 个视频，` +
         `已转录 ${transcribed} 个，剩余 ${remaining} 个待转录`;
       show('resumeBanner');
       hide('startBtn');
@@ -706,6 +714,8 @@ async function startExtraction() {
 async function resumeExtraction() {
   hide('resumeBanner');
   show('startBtn');
+  $('startBtn').disabled = true;
+  $('startBtn').textContent = '处理中...';
 
   const cached = STATE._cachedData;
   STATE.videos = cached.videos;
@@ -724,10 +734,15 @@ async function resumeExtraction() {
   $('titleScroll').classList.add('hidden');
   startTimer();
 
-  await doTranscription();
-
-  $('startBtn').disabled = false;
-  $('startBtn').textContent = '开始提取';
+  try {
+    await doTranscription();
+  } catch (e) {
+    setStatus(e.message, 'error');
+    stopTimer();
+  } finally {
+    $('startBtn').disabled = false;
+    $('startBtn').textContent = '开始提取';
+  }
 }
 
 // 用户选择「重新搜索」
@@ -768,8 +783,8 @@ async function doFullExtraction(url) {
     setStatus(`找到 ${STATE.videos.length} 个视频`, 'success');
     saveToHistory(url, $('keyword').value.trim(), STATE.creatorName);
 
-    // 缓存视频列表
-    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName);
+    // 缓存视频列表（含关键词）
+    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
 
     if (!STATE.videos.length) {
       setStatus('未找到匹配的视频', 'warning');
@@ -820,8 +835,8 @@ async function doTranscription() {
     setStatus(`全部完成 — ${cached} 个视频已转录`, 'success');
     stopTimer();
     showResults();
-    // 更新视频列表缓存
-    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName);
+    // 更新视频列表缓存（含关键词）
+    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
     return;
   }
 
@@ -848,8 +863,8 @@ async function doTranscription() {
     }
   }
 
-  // 更新视频列表缓存（含转录状态）
-  saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName);
+  // 更新视频列表缓存（含转录状态和关键词）
+  saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
 
   setProgress(100);
   setStatus(`完成 — 成功 ${ok}，失败 ${fail}`, 'success');
