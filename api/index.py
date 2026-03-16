@@ -8,10 +8,13 @@ Flask 应用，提供以下 API：
 - POST /api/chat           博主 GPT 对话
 """
 
-import asyncio
+import base64
+import hashlib
 import json
 import os
+import random
 import re
+import string
 import tempfile
 import time
 import urllib.parse
@@ -116,21 +119,21 @@ def fetch_videos():
     if not sec_uid:
         return jsonify({"error": "缺少 sec_uid"}), 400
 
-    # 优先 f2（免费、无限制）
+    # 优先直接调用抖音 API（轻量级，无 f2 依赖）
     if not use_apify and cookie:
         try:
-            videos, creator_name = asyncio.run(
-                _f2_fetch_videos(sec_uid, cookie, max_videos, keyword)
+            videos, creator_name = _fetch_videos_direct(
+                sec_uid, cookie, max_videos, keyword
             )
             return jsonify({
                 "videos": videos,
                 "creator_name": creator_name,
                 "total": len(videos),
-                "method": "f2",
+                "method": "direct",
             })
         except Exception as e:
             if not apify_token:
-                return jsonify({"error": f"f2 获取失败: {e}"}), 500
+                return jsonify({"error": f"获取失败: {e}"}), 500
 
     # Apify 备选
     if apify_token:
@@ -311,90 +314,258 @@ def _match_keyword(video: dict, keywords: list[str]) -> bool:
     return any(kw in title or kw in raw_title for kw in keywords)
 
 
-# ─── f2 视频获取 ───
+# ─── XBogus 签名（纯 Python，无外部依赖）───
 
 
-async def _f2_fetch_videos(
+class _XBogus:
+    """抖音 X-Bogus 签名算法（来自 f2 项目，Apache 2.0 协议）"""
+
+    def __init__(self, user_agent: str = "") -> None:
+        self.Array = [
+            None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None, None, 10, 11, 12, 13, 14, 15
+        ]
+        self.character = "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe="
+        self.ua_key = b"\x00\x01\x0c"
+        self.user_agent = user_agent or (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+        )
+
+    def _md5_str_to_array(self, md5_str):
+        if isinstance(md5_str, str) and len(md5_str) > 32:
+            return [ord(c) for c in md5_str]
+        array, idx = [], 0
+        while idx < len(md5_str):
+            array.append((self.Array[ord(md5_str[idx])] << 4) | self.Array[ord(md5_str[idx + 1])])
+            idx += 2
+        return array
+
+    def _md5(self, input_data):
+        if isinstance(input_data, str):
+            arr = self._md5_str_to_array(input_data)
+        else:
+            arr = input_data
+        return hashlib.md5(bytes(arr)).hexdigest()
+
+    def _rc4_encrypt(self, key, data):
+        S = list(range(256))
+        j = 0
+        for i in range(256):
+            j = (j + S[i] + key[i % len(key)]) % 256
+            S[i], S[j] = S[j], S[i]
+        i = j = 0
+        out = bytearray()
+        for byte in data:
+            i = (i + 1) % 256
+            j = (j + S[i]) % 256
+            S[i], S[j] = S[j], S[i]
+            out.append(byte ^ S[(S[i] + S[j]) % 256])
+        return out
+
+    def _calc(self, a1, a2, a3):
+        x3 = ((a1 & 255) << 16) | ((a2 & 255) << 8) | a3
+        return (self.character[(x3 & 16515072) >> 18] + self.character[(x3 & 258048) >> 12]
+                + self.character[(x3 & 4032) >> 6] + self.character[x3 & 63])
+
+    def get_xbogus(self, url_params):
+        a1 = self._md5_str_to_array(self._md5(
+            base64.b64encode(self._rc4_encrypt(self.ua_key, self.user_agent.encode("ISO-8859-1"))).decode("ISO-8859-1")
+        ))
+        a2 = self._md5_str_to_array(self._md5(self._md5_str_to_array("d41d8cd98f00b204e9800998ecf8427e")))
+        up = self._md5_str_to_array(self._md5(self._md5_str_to_array(self._md5(url_params))))
+        timer = int(time.time())
+        ct = 536919696
+        na = [64, 0, 1, 12, up[14], up[15], a2[14], a2[15], a1[14], a1[15],
+              timer >> 24 & 255, timer >> 16 & 255, timer >> 8 & 255, timer & 255,
+              ct >> 24 & 255, ct >> 16 & 255, ct >> 8 & 255, ct & 255]
+        xor_r = na[0]
+        for v in na[1:]:
+            xor_r ^= int(v)
+        na.append(xor_r)
+        a3, a4 = [], []
+        for idx in range(0, len(na), 2):
+            a3.append(na[idx])
+            if idx + 1 < len(na):
+                a4.append(na[idx + 1])
+        merge = a3 + a4
+        # encoding_conversion 参数顺序: a,b,c,e,d,t,f,r,n,o,i,_,x,u,s,l,v,h,p
+        # y = [a, int(i), b, _, c, x, e, u, d, s, t, l, f, v, r, h, n, p, o]
+        m = merge
+        y = [m[0], int(m[10]), m[1], m[11], m[2], m[12], m[3], m[13],
+             m[4], m[14], m[5], m[15], m[6], m[16], m[7], m[17],
+             m[8], m[18] if len(m) > 18 else 0, m[9]]
+        garbled = chr(2) + chr(255) + self._rc4_encrypt(
+            "ÿ".encode("ISO-8859-1"), bytes(y[:19]).decode("ISO-8859-1").encode("ISO-8859-1")
+        ).decode("ISO-8859-1")
+        xb_ = ""
+        idx = 0
+        while idx < len(garbled):
+            xb_ += self._calc(ord(garbled[idx]), ord(garbled[idx + 1]), ord(garbled[idx + 2]))
+            idx += 3
+        return f"{url_params}&X-Bogus={xb_}"
+
+
+# ─── 直接 HTTP 抖音 API（替代 f2）───
+
+_DY_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+)
+
+
+def _gen_mstoken() -> str:
+    """生成随机 msToken"""
+    chars = string.ascii_letters + string.digits + "+/"
+    return "".join(random.choices(chars, k=126)) + "=="
+
+
+def _build_base_params(sec_uid: str, max_cursor: int = 0, count: int = 20) -> dict:
+    """构建抖音 API 请求参数"""
+    return {
+        "device_platform": "webapp",
+        "aid": "6383",
+        "channel": "channel_pc_web",
+        "sec_user_id": sec_uid,
+        "max_cursor": str(max_cursor),
+        "locate_query": "false",
+        "show_live_replay_strategy": "1",
+        "need_time_list": "1",
+        "time_list_query": "0",
+        "whale_cut_token": "",
+        "cut_version": "1",
+        "count": str(count),
+        "publish_video_strategy_type": "2",
+        "pc_client_type": "1",
+        "version_code": "290100",
+        "version_name": "29.1.0",
+        "cookie_enabled": "true",
+        "screen_width": "1920",
+        "screen_height": "1080",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Edge",
+        "browser_version": "130.0.0.0",
+        "browser_online": "true",
+        "engine_name": "Blink",
+        "engine_version": "130.0.0.0",
+        "os_name": "Windows",
+        "os_version": "10",
+        "cpu_core_num": "12",
+        "device_memory": "8",
+        "platform": "PC",
+        "downlink": "10",
+        "effective_type": "4g",
+        "round_trip_time": "100",
+        "msToken": _gen_mstoken(),
+    }
+
+
+def _douyin_api_request(endpoint: str, params: dict, cookie: str) -> dict:
+    """发送带签名的抖音 API 请求"""
+    import httpx
+
+    param_str = "&".join(f"{k}={v}" for k, v in params.items())
+    xb = _XBogus(_DY_UA)
+    signed_url = xb.get_xbogus(param_str)
+    full_url = f"{endpoint}?{signed_url}"
+
+    headers = {
+        "User-Agent": _DY_UA,
+        "Referer": "https://www.douyin.com/",
+        "Cookie": cookie,
+        "Accept": "application/json, text/plain, */*",
+    }
+
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        resp = client.get(full_url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _fetch_user_profile_direct(sec_uid: str, cookie: str) -> dict:
+    """直接调用抖音 API 获取用户信息"""
+    params = {
+        "device_platform": "webapp",
+        "aid": "6383",
+        "channel": "channel_pc_web",
+        "sec_user_id": sec_uid,
+        "pc_client_type": "1",
+        "version_code": "290100",
+        "version_name": "29.1.0",
+        "cookie_enabled": "true",
+        "screen_width": "1920",
+        "screen_height": "1080",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Edge",
+        "browser_version": "130.0.0.0",
+        "browser_online": "true",
+        "engine_name": "Blink",
+        "engine_version": "130.0.0.0",
+        "os_name": "Windows",
+        "os_version": "10",
+        "cpu_core_num": "12",
+        "device_memory": "8",
+        "platform": "PC",
+        "downlink": "10",
+        "effective_type": "4g",
+        "round_trip_time": "100",
+        "msToken": _gen_mstoken(),
+    }
+    return _douyin_api_request("https://www.douyin.com/aweme/v1/web/user/profile/other/", params, cookie)
+
+
+def _fetch_videos_direct(
     sec_uid: str, cookie: str, max_videos: int = 0, keyword: str = ""
 ) -> tuple[list[dict], str]:
-    """使用 f2 框架获取视频列表"""
-    import logging
-
-    logging.basicConfig(level=logging.WARNING)
-    logging.getLogger("f2").setLevel(logging.WARNING)
-    os.environ.setdefault("F2_BARK_KEY", "")
-
-    from f2.apps.douyin.handler import DouyinHandler
-
-    kwargs = {
-        "headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_9) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/142.0.0.0 Safari/537.36"
-            ),
-            "Referer": "https://www.douyin.com/",
-        },
-        "cookie": cookie,
-        "proxies": {"http://": None, "https://": None},
-    }
-    handler = DouyinHandler(kwargs)
-
-    profile = await handler.fetch_user_profile(sec_user_id=sec_uid)
-    creator_name = profile.nickname or ""
+    """直接调用抖音 API 获取视频列表（替代 f2）"""
+    # 获取用户信息
+    profile_data = _fetch_user_profile_direct(sec_uid, cookie)
+    user = profile_data.get("user", {})
+    creator_name = user.get("nickname", "")
 
     keywords = keyword.split() if keyword else None
     all_videos = []
+    max_cursor = 0
+    max_count = max_videos if max_videos > 0 else 99999
 
-    async for page_filter in handler.fetch_user_post_videos(
-        sec_user_id=sec_uid,
-        max_counts=max_videos if max_videos > 0 else None,
-    ):
-        aweme_ids = page_filter.aweme_id
-        if not aweme_ids:
+    while len(all_videos) < max_count:
+        params = _build_base_params(sec_uid, max_cursor, count=20)
+        data = _douyin_api_request(
+            "https://www.douyin.com/aweme/v1/web/aweme/post/", params, cookie
+        )
+
+        aweme_list = data.get("aweme_list", [])
+        if not aweme_list:
             break
-        if not isinstance(aweme_ids, list):
-            aweme_ids = [aweme_ids]
 
-        descs = page_filter.desc
-        if not isinstance(descs, list):
-            descs = [descs]
-        nicknames = page_filter.nickname
-        if not isinstance(nicknames, list):
-            nicknames = [nicknames]
-        create_times = page_filter.create_time
-        if not isinstance(create_times, list):
-            create_times = [create_times]
-        durations = page_filter.video_duration
-        if not isinstance(durations, list):
-            durations = [durations]
-        music_urls = page_filter.music_play_url
-        if not isinstance(music_urls, list):
-            music_urls = [music_urls]
-
-        for i, vid in enumerate(aweme_ids):
-
-            def _safe(lst, idx, default=""):
-                try:
-                    return lst[idx] if isinstance(lst, list) and idx < len(lst) else default
-                except (IndexError, TypeError):
-                    return default
-
-            desc = _safe(descs, i, "无标题")
+        for item in aweme_list:
+            vid = item.get("aweme_id", "")
+            desc = item.get("desc", "无标题")
             title = re.sub(r"#\S+", "", desc).strip() or "无标题"
-            duration = _safe(durations, i, 0)
+            duration = item.get("video", {}).get("duration", 0)
             if isinstance(duration, (int, float)) and duration > 10000:
                 duration = duration // 1000
+            music = item.get("music", {})
+            play_url_list = (music.get("play_url") or {}).get("url_list", [])
+            audio_url = play_url_list[0] if play_url_list else ""
+            author = (item.get("author") or {}).get("nickname", creator_name)
+            create_time = item.get("create_time", "")
 
             video = {
                 "id": str(vid),
                 "title": title,
                 "raw_title": desc,
                 "url": f"https://www.douyin.com/video/{vid}",
-                "create_time": _safe(create_times, i, ""),
+                "create_time": create_time,
                 "duration": duration,
-                "author": _safe(nicknames, i, creator_name),
-                "audio_url": _safe(music_urls, i, ""),
+                "author": author,
+                "audio_url": audio_url,
                 "creator_name": creator_name,
             }
 
@@ -403,6 +574,14 @@ async def _f2_fetch_videos(
                     all_videos.append(video)
             else:
                 all_videos.append(video)
+
+            if len(all_videos) >= max_count:
+                break
+
+        has_more = data.get("has_more", False)
+        max_cursor = data.get("max_cursor", 0)
+        if not has_more or not max_cursor:
+            break
 
     return all_videos, creator_name
 
