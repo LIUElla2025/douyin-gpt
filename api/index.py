@@ -27,10 +27,10 @@ from flask import Flask, Response, jsonify, request, send_file
 app = Flask(__name__)
 
 # ─── 从 Vercel 环境变量读取默认配置 ───
-_ENV_OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
-_ENV_COOKIE = os.environ.get("DOUYIN_COOKIE", "")
-_ENV_APIFY_TOKEN = os.environ.get("APIFY_API_TOKEN", "")
-_ENV_PROXY = os.environ.get("PROXY", "")
+_ENV_OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+_ENV_COOKIE = os.environ.get("DOUYIN_COOKIE", "").strip()
+_ENV_APIFY_TOKEN = os.environ.get("APIFY_API_TOKEN", "").strip()
+_ENV_PROXY = os.environ.get("PROXY", "").strip()
 
 
 def _clean_cookie(cookie: str) -> str:
@@ -837,7 +837,7 @@ def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
         data=body,
         method="POST",
     )
-    req.add_header("Authorization", f"Bearer {api_key}")
+    req.add_header("Authorization", f"Bearer {api_key.strip()}")
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
 
     ctx = ssl.create_default_context()
