@@ -303,202 +303,122 @@ def fetch_videos():
 def transcribe():
     data = request.json or {}
     cfg = _get_config(data)
-    video_download_url = data.get("video_download_url", "").strip()
     audio_url = data.get("audio_url", "").strip()
+    video_download_url = data.get("video_download_url", "").strip()
     video_url = data.get("video_url", "").strip()
     openai_key = cfg["openai_api_key"]
     proxy = cfg["proxy"]
-
     cookie = cfg["cookie"]
 
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
-    # 优先用音频流（原声/口述，文件小、直接可用），其次视频文件，最后视频页面URL
-    # 抖音 DASH 格式下 play_addr 仅含视频轨道无音频，audio_url（music.play_url）
-    # 对说话类视频就是"原声"，包含博主口述内容
+    # 优先用音频流（原声，小文件），其次视频，最后页面URL
     download_url = audio_url or video_download_url or video_url
-    url_source = "audio" if audio_url else ("video_download" if video_download_url else "video_page")
     if not download_url:
         return jsonify({"error": "缺少音频/视频 URL"}), 400
 
-    tmp_path = None
-    extracted_audio = None
+    # 所有临时文件路径，统一在最后清理
+    tmp_files = []
+
     try:
+        # --- 第1步：下载 ---
         suffix = ".mp3" if audio_url else ".mp4"
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         tmp_path = tmp.name
         tmp.close()
+        tmp_files.append(tmp_path)
 
-        # 下载音频（带重试 + 分块读取 + 代理支持）
-        dl_err_msg = None
-        for attempt in range(3):
-            try:
-                req = urllib.request.Request(download_url)
-                req.add_header("User-Agent", _DY_UA)
-                req.add_header("Referer", "https://www.douyin.com/")
-                if cookie:
-                    req.add_header("Cookie", cookie)
-                # 使用代理（如果配置了 PROXY 环境变量）
-                if proxy:
-                    proxy_handler = urllib.request.ProxyHandler({
-                        "http": proxy, "https": proxy,
-                    })
-                    opener = urllib.request.build_opener(proxy_handler)
-                    resp = opener.open(req, timeout=30)
-                else:
-                    resp = urllib.request.urlopen(req, timeout=30)
-                with open(tmp_path, "wb") as f:
-                    while True:
-                        chunk = resp.read(8192)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                dl_err_msg = None
-                break
-            except Exception as e:
-                dl_err_msg = str(e)
-                time.sleep(1)
-
-        if dl_err_msg:
-            return jsonify({"error": f"音频下载失败(重试3次): {dl_err_msg}"}), 500
+        _download_url(download_url, tmp_path, cookie, proxy)
 
         file_size = os.path.getsize(tmp_path)
         if file_size < 1000:
-            return jsonify({"error": f"音频文件太小({file_size}字节)"}), 400
+            # 主URL失败，尝试备用URL
+            fallback = video_download_url if download_url == audio_url else audio_url
+            if fallback and fallback != download_url:
+                _download_url(fallback, tmp_path, cookie, proxy)
+                file_size = os.path.getsize(tmp_path)
+            if file_size < 1000:
+                return jsonify({"error": f"音频文件太小({file_size}字节)"}), 400
+
         if file_size > 25 * 1024 * 1024:
-            # 视频文件超过 25MB，尝试用 audio_url（背景音乐+口述混合）
+            # 超过25MB，尝试用更小的音频URL
             if download_url != audio_url and audio_url:
-                try:
-                    req = urllib.request.Request(audio_url)
-                    req.add_header("User-Agent", _DY_UA)
-                    req.add_header("Referer", "https://www.douyin.com/")
-                    if cookie:
-                        req.add_header("Cookie", cookie)
-                    if proxy:
-                        ph = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-                        opener = urllib.request.build_opener(ph)
-                        resp = opener.open(req, timeout=30)
-                    else:
-                        resp = urllib.request.urlopen(req, timeout=30)
-                    with open(tmp_path, "wb") as f:
-                        while True:
-                            chunk = resp.read(8192)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                    file_size = os.path.getsize(tmp_path)
-                except Exception:
-                    pass
+                _download_url(audio_url, tmp_path, cookie, proxy)
+                file_size = os.path.getsize(tmp_path)
             if file_size > 25 * 1024 * 1024:
-                return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper 限制 25MB"}), 400
+                return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
 
-        # 验证文件是否为有效的音视频（非 HTML 错误页面）
-        with open(tmp_path, "rb") as f:
-            header = f.read(16)
-        is_valid_media = (
-            header[:3] == b"ID3"                    # MP3 with ID3 tag
-            or header[:2] == b"\xff\xfb"             # MP3 frame sync
-            or header[:2] == b"\xff\xf3"             # MP3 MPEG2
-            or header[4:8] == b"ftyp"                # MP4/M4A
-            or header[:4] == b"\x1a\x45\xdf\xa3"     # WebM/MKV
-            or header[:4] == b"OggS"                 # OGG
-            or header[:4] == b"RIFF"                 # WAV
-            or header[:4] == b"fLaC"                 # FLAC
-        )
-        if not is_valid_media:
-            # 下载到的是非媒体文件（可能是 HTML 错误页），尝试回退到另一个 URL
-            fallback_url = video_download_url if download_url == audio_url else audio_url
-            if fallback_url and fallback_url != download_url:
-                # 用 audio_url 重新下载（带代理）
-                try:
-                    req = urllib.request.Request(fallback_url)
-                    req.add_header("User-Agent", _DY_UA)
-                    req.add_header("Referer", "https://www.douyin.com/")
-                    if cookie:
-                        req.add_header("Cookie", cookie)
-                    if proxy:
-                        proxy_handler = urllib.request.ProxyHandler({
-                            "http": proxy, "https": proxy,
-                        })
-                        opener = urllib.request.build_opener(proxy_handler)
-                        resp = opener.open(req, timeout=30)
-                    else:
-                        resp = urllib.request.urlopen(req, timeout=30)
-                    with open(tmp_path, "wb") as f:
-                        while True:
-                            chunk = resp.read(8192)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                    # 重新检查
-                    file_size = os.path.getsize(tmp_path)
-                    if file_size < 1000:
-                        return jsonify({"error": "主URL和备用URL均无法下载有效文件"}), 400
-                except Exception as e:
-                    return jsonify({"error": f"主URL下载无效，回退也失败: {e}"}), 500
-            else:
-                snippet = header[:50].decode("utf-8", errors="replace")
-                return jsonify({"error": f"下载的文件不是有效音视频格式（开头: {snippet[:80]}）"}), 400
-
-        # 如果是视频文件（MP4），先提取音频轨道为 .m4a
-        # 解决抖音 H.265 视频导致 Whisper 解码失败的问题
+        # --- 第2步：准备Whisper输入文件 ---
         whisper_file = tmp_path
-        extracted_audio = None
-        extract_err_msg = ""
+
         if tmp_path.endswith(".mp4"):
             try:
-                extracted_audio = _extract_audio(tmp_path)
-                whisper_file = extracted_audio
-            except Exception as extract_err:
-                extract_err_msg = str(extract_err)
-                # 提取失败时，尝试直接改扩展名为 .m4a 发给 Whisper
+                audio_path = _extract_audio(tmp_path)
+                tmp_files.append(audio_path)
+                whisper_file = audio_path
+            except Exception:
+                # 提取失败，直接改扩展名试试
                 m4a_path = tmp_path.rsplit(".", 1)[0] + ".m4a"
                 import shutil
                 shutil.copy2(tmp_path, m4a_path)
-                extracted_audio = m4a_path
+                tmp_files.append(m4a_path)
                 whisper_file = m4a_path
 
-        # 调用 Whisper API（带重试）
-        whisper_err_msg = None
-        transcript = None
-        for attempt in range(3):
-            try:
-                transcript = _call_whisper(whisper_file, openai_key, proxy)
-                break
-            except Exception as e:
-                whisper_err_msg = str(e)
-                if attempt < 2:
-                    time.sleep(2)
+        # --- 第3步：调用 Whisper ---
+        transcript = _call_whisper(whisper_file, openai_key, proxy)
 
-        if transcript is None:
-            detail = whisper_err_msg or "未知错误"
-            if extract_err_msg:
-                detail += f" | 音频提取失败: {extract_err_msg}"
-            detail += f" | URL来源: {url_source}"
-            return jsonify({"error": f"Whisper API 失败: {detail}"}), 500
-
-        # GPT 后处理：添加标点符号、整理文稿
-        raw_text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
-        if raw_text and openai_key:
+        # --- 第4步：GPT 后处理加标点 ---
+        raw_text = transcript.get("text", "") if isinstance(transcript, dict) else ""
+        if raw_text:
             try:
                 polished = _polish_transcript(raw_text, openai_key)
                 if polished:
                     transcript["text"] = polished
-                    # 清空 segments（已合并为完整文稿）
                     transcript["segments"] = []
             except Exception:
-                pass  # 后处理失败不影响原始结果
+                pass
 
         return jsonify({"transcript": transcript})
 
     except Exception as e:
         return jsonify({"error": f"转录失败: {e}"}), 500
     finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        if extracted_audio and os.path.exists(extracted_audio):
-            os.unlink(extracted_audio)
+        for f in tmp_files:
+            try:
+                if os.path.exists(f):
+                    os.unlink(f)
+            except Exception:
+                pass
+
+
+def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = ""):
+    """下载URL到本地文件，带重试"""
+    last_err = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", _DY_UA)
+            req.add_header("Referer", "https://www.douyin.com/")
+            if cookie:
+                req.add_header("Cookie", cookie)
+            if proxy:
+                handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                opener = urllib.request.build_opener(handler)
+                resp = opener.open(req, timeout=30)
+            else:
+                resp = urllib.request.urlopen(req, timeout=30)
+            with open(dest_path, "wb") as f:
+                while True:
+                    chunk = resp.read(8192)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            return
+        except Exception as e:
+            last_err = e
+            time.sleep(1)
+    raise RuntimeError(f"下载失败(重试3次): {last_err}")
 
 
 # ─── 生成 Word 文档 ───
