@@ -21,7 +21,6 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 from io import BytesIO
-from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_file
 
@@ -484,39 +483,20 @@ def _douyin_api_request(endpoint: str, params: dict, cookie: str) -> dict:
     with httpx.Client(timeout=30, follow_redirects=True) as client:
         resp = client.get(full_url, headers=headers)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+
+    # 检查抖音 API 业务错误码
+    status_code = data.get("status_code")
+    if status_code and status_code != 0:
+        msg = data.get("status_msg", "")
+        raise RuntimeError(f"抖音 API 错误 (code={status_code}): {msg or '请检查 Cookie 是否有效'}")
+
+    return data
 
 
 def _fetch_user_profile_direct(sec_uid: str, cookie: str) -> dict:
     """直接调用抖音 API 获取用户信息"""
-    params = {
-        "device_platform": "webapp",
-        "aid": "6383",
-        "channel": "channel_pc_web",
-        "sec_user_id": sec_uid,
-        "pc_client_type": "1",
-        "version_code": "290100",
-        "version_name": "29.1.0",
-        "cookie_enabled": "true",
-        "screen_width": "1920",
-        "screen_height": "1080",
-        "browser_language": "zh-CN",
-        "browser_platform": "Win32",
-        "browser_name": "Edge",
-        "browser_version": "130.0.0.0",
-        "browser_online": "true",
-        "engine_name": "Blink",
-        "engine_version": "130.0.0.0",
-        "os_name": "Windows",
-        "os_version": "10",
-        "cpu_core_num": "12",
-        "device_memory": "8",
-        "platform": "PC",
-        "downlink": "10",
-        "effective_type": "4g",
-        "round_trip_time": "100",
-        "msToken": _gen_mstoken(),
-    }
+    params = _build_base_params(sec_uid)
     return _douyin_api_request("https://www.douyin.com/aweme/v1/web/user/profile/other/", params, cookie)
 
 
@@ -582,6 +562,9 @@ def _fetch_videos_direct(
         max_cursor = data.get("max_cursor", 0)
         if not has_more or not max_cursor:
             break
+
+        # 分页间短延迟，防止触发反爬
+        time.sleep(0.3)
 
     return all_videos, creator_name
 
