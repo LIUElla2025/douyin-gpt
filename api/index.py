@@ -404,15 +404,15 @@ def transcribe():
         # 解决抖音 H.265 视频导致 Whisper 解码失败的问题
         whisper_file = tmp_path
         extracted_audio = None
+        extract_err_msg = ""
         if tmp_path.endswith(".mp4"):
             try:
                 extracted_audio = _extract_audio(tmp_path)
                 whisper_file = extracted_audio
             except Exception as extract_err:
-                # 提取失败，仍尝试直接发送原文件
-                pass
+                extract_err_msg = str(extract_err)
 
-        # 调用 Whisper API（带重试，指数退避）
+        # 调用 Whisper API（带重试）
         whisper_err_msg = None
         transcript = None
         for attempt in range(3):
@@ -421,10 +421,47 @@ def transcribe():
                 break
             except Exception as e:
                 whisper_err_msg = str(e)
-                time.sleep(3 * (attempt + 1))
+                if attempt < 2:
+                    time.sleep(2)
+
+        # 如果提取的WAV或原始MP4都失败了，回退到 audio_url
+        if transcript is None and audio_url and download_url != audio_url:
+            fallback_path = None
+            try:
+                fb_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                fallback_path = fb_tmp.name
+                fb_tmp.close()
+                req = urllib.request.Request(audio_url)
+                req.add_header("User-Agent", _DY_UA)
+                req.add_header("Referer", "https://www.douyin.com/")
+                if cookie:
+                    req.add_header("Cookie", cookie)
+                if proxy:
+                    ph = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                    opener = urllib.request.build_opener(ph)
+                    resp = opener.open(req, timeout=90)
+                else:
+                    resp = urllib.request.urlopen(req, timeout=90)
+                with open(fallback_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(8192)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                fb_size = os.path.getsize(fallback_path)
+                if fb_size > 1000 and fb_size <= 25 * 1024 * 1024:
+                    transcript = _call_whisper(fallback_path, openai_key, proxy)
+            except Exception:
+                pass
+            finally:
+                if fallback_path and os.path.exists(fallback_path):
+                    os.unlink(fallback_path)
 
         if transcript is None:
-            return jsonify({"error": f"Whisper API 失败(重试3次): {whisper_err_msg}"}), 500
+            detail = whisper_err_msg or "未知错误"
+            if extract_err_msg:
+                detail += f" | 音频提取失败: {extract_err_msg}"
+            return jsonify({"error": f"Whisper API 失败: {detail}"}), 500
 
         return jsonify({"transcript": transcript})
 
