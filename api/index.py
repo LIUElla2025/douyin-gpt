@@ -264,6 +264,8 @@ def transcribe():
     openai_key = cfg["openai_api_key"]
     proxy = cfg["proxy"]
 
+    cookie = cfg["cookie"]
+
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
@@ -286,6 +288,8 @@ def transcribe():
                 req = urllib.request.Request(download_url)
                 req.add_header("User-Agent", _DY_UA)
                 req.add_header("Referer", "https://www.douyin.com/")
+                if cookie:
+                    req.add_header("Cookie", cookie)
                 resp = urllib.request.urlopen(req, timeout=90)
                 with open(tmp_path, "wb") as f:
                     while True:
