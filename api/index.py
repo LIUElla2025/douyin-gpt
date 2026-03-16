@@ -400,7 +400,7 @@ def transcribe():
                 snippet = header[:50].decode("utf-8", errors="replace")
                 return jsonify({"error": f"下载的文件不是有效音视频格式（开头: {snippet[:80]}）"}), 400
 
-        # 如果是视频文件（MP4），先提取音频轨道为 WAV
+        # 如果是视频文件（MP4），先提取音频轨道为 .m4a
         # 解决抖音 H.265 视频导致 Whisper 解码失败的问题
         whisper_file = tmp_path
         extracted_audio = None
@@ -411,6 +411,12 @@ def transcribe():
                 whisper_file = extracted_audio
             except Exception as extract_err:
                 extract_err_msg = str(extract_err)
+                # 提取失败时，尝试直接改扩展名为 .m4a 发给 Whisper
+                m4a_path = tmp_path.rsplit(".", 1)[0] + ".m4a"
+                import shutil
+                shutil.copy2(tmp_path, m4a_path)
+                extracted_audio = m4a_path
+                whisper_file = m4a_path
 
         # 调用 Whisper API（带重试）
         whisper_err_msg = None
@@ -427,7 +433,7 @@ def transcribe():
         if transcript is None:
             detail = whisper_err_msg or "未知错误"
             if extract_err_msg:
-                detail += f" | 音频提取失败: {extract_err_msg}"
+                detail += f" | 音频提取也失败: {extract_err_msg}"
             return jsonify({"error": f"Whisper API 失败: {detail}"}), 500
 
         return jsonify({"transcript": transcript})
@@ -912,20 +918,9 @@ def _normalize_video_list(items: list) -> list[dict]:
 # ─── Whisper 转录 ───
 
 
-def _extract_audio(video_path: str) -> str:
-    """纯 Python：从 MP4 中剥离视频轨道，只保留音频轨道，输出 .m4a。
-    无任何外部依赖。解决抖音 H.265 视频导致 Whisper 无法解码的问题。
-    原理：MP4 容器中音频(AAC)和视频(H.265)是独立轨道，
-    只需从 moov 中删掉视频 trak，保留音频 trak + 原始 mdat 即可。
-    """
+def _parse_boxes(data: bytes) -> list[tuple]:
+    """解析 MP4 box 结构，返回 [(offset, size, type_bytes), ...]"""
     import struct
-
-    audio_path = video_path.rsplit(".", 1)[0] + ".m4a"
-
-    with open(video_path, "rb") as f:
-        data = f.read()
-
-    # 解析顶层 box
     boxes = []
     pos = 0
     while pos < len(data):
@@ -939,108 +934,98 @@ def _extract_audio(video_path: str) -> str:
             if pos + 16 > len(data):
                 break
             size = struct.unpack(">Q", data[pos + 8:pos + 16])[0]
-        if size < 8:
+        if size < 8 or pos + size > len(data):
             break
         boxes.append((pos, size, box_type))
         pos += size
+    return boxes
 
-    # 检查是否有 moov
-    has_moov = any(bt == b"moov" for _, _, bt in boxes)
-    if not has_moov:
-        raise RuntimeError("MP4 文件中没有 moov box")
+
+def _get_trak_handler(trak_content: bytes) -> str:
+    """从 trak 内容中找到 handler_type（遍历 mdia → hdlr）。
+    返回 handler_type 字符串，如 'soun'、'vide'，或空字符串。
+    """
+    # 扫描 trak 子 box 找 mdia
+    for _, _, bt in _parse_boxes(trak_content):
+        pass  # 只是验证能解析
+    for bpos, bsize, bt in _parse_boxes(trak_content):
+        if bt == b"mdia":
+            mdia_content = trak_content[bpos + 8:bpos + bsize]
+            # 扫描 mdia 子 box 找 hdlr
+            for mpos, msize, mt in _parse_boxes(mdia_content):
+                if mt == b"hdlr":
+                    # hdlr FullBox: 4 version+flags + 4 pre_defined + 4 handler_type
+                    hdlr_content = mdia_content[mpos + 8:mpos + msize]
+                    if len(hdlr_content) >= 12:
+                        return hdlr_content[8:12].decode("ascii", errors="replace")
+            break
+    return ""
+
+
+def _extract_audio(video_path: str) -> str:
+    """纯 Python：从 MP4 中剥离视频轨道，只保留音频轨道，输出 .m4a。
+    无任何外部依赖。解决抖音 H.265 视频导致 Whisper 无法解码的问题。
+    """
+    import struct
+
+    audio_path = video_path.rsplit(".", 1)[0] + ".m4a"
+
+    with open(video_path, "rb") as f:
+        data = f.read()
+
+    top_boxes = _parse_boxes(data)
+    top_types = [bt.decode("ascii", errors="replace") for _, _, bt in top_boxes]
+
+    # 找 moov
+    moov_info = None
+    for bpos, bsize, bt in top_boxes:
+        if bt == b"moov":
+            moov_info = (bpos, bsize)
+            break
+    if moov_info is None:
+        raise RuntimeError(f"MP4 无 moov box (顶层: {top_types})")
+
+    moov_pos, moov_size = moov_info
+    moov_content = data[moov_pos + 8:moov_pos + moov_size]
+    moov_children = _parse_boxes(moov_content)
+
+    # 找所有 trak 并识别 handler
+    audio_traks = []
+    all_handlers = []
+    for cpos, csize, ctype in moov_children:
+        if ctype == b"trak":
+            trak_content = moov_content[cpos + 8:cpos + csize]
+            handler = _get_trak_handler(trak_content)
+            all_handlers.append(handler)
+            if handler == "soun":
+                audio_traks.append((cpos, csize))
+
+    if not audio_traks:
+        raise RuntimeError(
+            f"无音频轨道 (找到 {len(all_handlers)} 个 trak, "
+            f"handler: {all_handlers}, 顶层: {top_types})"
+        )
+
+    # 重建 moov：只保留音频 trak + 非 trak box
+    new_moov = bytearray()
+    audio_trak_set = set(p for p, _ in audio_traks)
+    for cpos, csize, ctype in moov_children:
+        if ctype == b"trak":
+            if cpos in audio_trak_set:
+                new_moov.extend(moov_content[cpos:cpos + csize])
+        else:
+            new_moov.extend(moov_content[cpos:cpos + csize])
 
     with open(audio_path, "wb") as out:
-        for box_pos, box_size, box_type in boxes:
-            if box_type == b"moov":
-                new_moov = _rebuild_moov_audio_only(data[box_pos + 8:box_pos + box_size])
-                if not new_moov:
-                    raise RuntimeError("视频中没有音频轨道")
+        for bpos, bsize, bt in top_boxes:
+            if bt == b"moov":
                 out.write(struct.pack(">I", len(new_moov) + 8))
                 out.write(b"moov")
                 out.write(new_moov)
             else:
-                out.write(data[box_pos:box_pos + box_size])
+                out.write(data[bpos:bpos + bsize])
 
     return audio_path
-
-
-def _rebuild_moov_audio_only(moov_data: bytes) -> bytes:
-    """从 moov 中删除视频 trak，只保留音频 trak 和其他 box。"""
-    import struct
-
-    result = bytearray()
-    pos = 0
-    has_audio = False
-    while pos < len(moov_data):
-        if pos + 8 > len(moov_data):
-            break
-        size = struct.unpack(">I", moov_data[pos:pos + 4])[0]
-        box_type = moov_data[pos + 4:pos + 8]
-        if size == 0:
-            size = len(moov_data) - pos
-        elif size == 1:
-            if pos + 16 > len(moov_data):
-                break
-            size = struct.unpack(">Q", moov_data[pos + 8:pos + 16])[0]
-        if size < 8:
-            break
-        if box_type == b"trak":
-            if _is_audio_trak(moov_data[pos + 8:pos + size]):
-                result.extend(moov_data[pos:pos + size])
-                has_audio = True
-            # 跳过视频 trak
-        else:
-            result.extend(moov_data[pos:pos + size])
-        pos += size
-
-    return bytes(result) if has_audio else b""
-
-
-def _is_audio_trak(trak_data: bytes) -> bool:
-    """检查 trak 是否为音频轨道（通过 mdia/hdlr 的 handler_type）。"""
-    import struct
-
-    pos = 0
-    while pos < len(trak_data):
-        if pos + 8 > len(trak_data):
-            break
-        size = struct.unpack(">I", trak_data[pos:pos + 4])[0]
-        box_type = trak_data[pos + 4:pos + 8]
-        if size == 0:
-            size = len(trak_data) - pos
-        elif size == 1:
-            if pos + 16 > len(trak_data):
-                break
-            size = struct.unpack(">Q", trak_data[pos + 8:pos + 16])[0]
-        if size < 8:
-            break
-        if box_type == b"mdia":
-            # 在 mdia 中找 hdlr
-            mpos = 0
-            mdia = trak_data[pos + 8:pos + size]
-            while mpos < len(mdia):
-                if mpos + 8 > len(mdia):
-                    break
-                ms = struct.unpack(">I", mdia[mpos:mpos + 4])[0]
-                mt = mdia[mpos + 4:mpos + 8]
-                if ms == 0:
-                    ms = len(mdia) - mpos
-                elif ms == 1:
-                    if mpos + 16 > len(mdia):
-                        break
-                    ms = struct.unpack(">Q", mdia[mpos + 8:mpos + 16])[0]
-                if ms < 8:
-                    break
-                if mt == b"hdlr":
-                    # hdlr: 8 header + 1 version + 3 flags + 4 pre_defined + 4 handler_type
-                    content = mdia[mpos + 8:mpos + ms]
-                    if len(content) >= 12:
-                        handler_type = content[8:12]
-                        return handler_type == b"soun"
-                mpos += ms
-            break
-        pos += size
-    return False
 
 
 def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
