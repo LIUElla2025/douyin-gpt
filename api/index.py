@@ -284,15 +284,17 @@ def transcribe():
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
-    # 优先用视频文件（含口述），其次背景音乐，最后视频页面URL
-    download_url = video_download_url or audio_url or video_url
-    url_source = "video_download" if video_download_url else ("audio" if audio_url else "video_page")
+    # 优先用音频流（原声/口述，文件小、直接可用），其次视频文件，最后视频页面URL
+    # 抖音 DASH 格式下 play_addr 仅含视频轨道无音频，audio_url（music.play_url）
+    # 对说话类视频就是"原声"，包含博主口述内容
+    download_url = audio_url or video_download_url or video_url
+    url_source = "audio" if audio_url else ("video_download" if video_download_url else "video_page")
     if not download_url:
         return jsonify({"error": "缺少音频/视频 URL"}), 400
 
     tmp_path = None
     try:
-        suffix = ".mp4" if video_download_url else ".mp3"
+        suffix = ".mp3" if audio_url else ".mp4"
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         tmp_path = tmp.name
         tmp.close()
