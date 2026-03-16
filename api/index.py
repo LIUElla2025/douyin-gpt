@@ -281,7 +281,7 @@ def transcribe():
         tmp_path = tmp.name
         tmp.close()
 
-        # 下载音频（带重试 + 分块读取）
+        # 下载音频（带重试 + 分块读取 + 代理支持）
         dl_err_msg = None
         for attempt in range(3):
             try:
@@ -290,7 +290,15 @@ def transcribe():
                 req.add_header("Referer", "https://www.douyin.com/")
                 if cookie:
                     req.add_header("Cookie", cookie)
-                resp = urllib.request.urlopen(req, timeout=90)
+                # 使用代理（如果配置了 PROXY 环境变量）
+                if proxy:
+                    proxy_handler = urllib.request.ProxyHandler({
+                        "http": proxy, "https": proxy,
+                    })
+                    opener = urllib.request.build_opener(proxy_handler)
+                    resp = opener.open(req, timeout=90)
+                else:
+                    resp = urllib.request.urlopen(req, timeout=90)
                 with open(tmp_path, "wb") as f:
                     while True:
                         chunk = resp.read(8192)
@@ -328,14 +336,21 @@ def transcribe():
         if not is_valid_media:
             # 下载到的是非媒体文件（可能是 HTML 错误页），尝试回退到 audio_url
             if download_url == video_download_url and audio_url:
-                # 用 audio_url 重新下载
+                # 用 audio_url 重新下载（带代理）
                 try:
                     req = urllib.request.Request(audio_url)
                     req.add_header("User-Agent", _DY_UA)
                     req.add_header("Referer", "https://www.douyin.com/")
                     if cookie:
                         req.add_header("Cookie", cookie)
-                    resp = urllib.request.urlopen(req, timeout=90)
+                    if proxy:
+                        proxy_handler = urllib.request.ProxyHandler({
+                            "http": proxy, "https": proxy,
+                        })
+                        opener = urllib.request.build_opener(proxy_handler)
+                        resp = opener.open(req, timeout=90)
+                    else:
+                        resp = urllib.request.urlopen(req, timeout=90)
                     with open(tmp_path, "wb") as f:
                         while True:
                             chunk = resp.read(8192)
