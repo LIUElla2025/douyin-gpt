@@ -510,17 +510,13 @@ def debug_video_fields():
         video_obj = item.get("video", {})
         result = {
             "video_keys": list(video_obj.keys()),
-            "item_keys": list(item.keys()),
-            # 字幕相关字段
-            "subtitle": video_obj.get("subtitle"),
-            "caption": item.get("caption"),
-            "video_text": item.get("video_text"),
-            "text_extra": item.get("text_extra"),
-            "srt_subtitle": item.get("srt_subtitle"),
-            "interaction_stickers": item.get("interaction_stickers"),
+            # 音频流字段（DASH分离的纯音频）
+            "audio": video_obj.get("audio"),
+            "bit_rate_audio": video_obj.get("bit_rate_audio"),
+            # play_addr_h264 结构
+            "play_addr_h264": video_obj.get("play_addr_h264"),
             # download_addr 是否存在
             "has_download_addr": "download_addr" in video_obj,
-            "download_addr_keys": list(video_obj.get("download_addr", {}).keys()) if "download_addr" in video_obj else None,
             # 视频描述
             "desc": item.get("desc"),
         }
