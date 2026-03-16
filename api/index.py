@@ -312,6 +312,46 @@ def transcribe():
         if file_size > 25 * 1024 * 1024:
             return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper 限制 25MB"}), 400
 
+        # 验证文件是否为有效的音视频（非 HTML 错误页面）
+        with open(tmp_path, "rb") as f:
+            header = f.read(16)
+        is_valid_media = (
+            header[:3] == b"ID3"                    # MP3 with ID3 tag
+            or header[:2] == b"\xff\xfb"             # MP3 frame sync
+            or header[:2] == b"\xff\xf3"             # MP3 MPEG2
+            or header[4:8] == b"ftyp"                # MP4/M4A
+            or header[:4] == b"\x1a\x45\xdf\xa3"     # WebM/MKV
+            or header[:4] == b"OggS"                 # OGG
+            or header[:4] == b"RIFF"                 # WAV
+            or header[:4] == b"fLaC"                 # FLAC
+        )
+        if not is_valid_media:
+            # 下载到的是非媒体文件（可能是 HTML 错误页），尝试回退到 audio_url
+            if download_url == video_download_url and audio_url:
+                # 用 audio_url 重新下载
+                try:
+                    req = urllib.request.Request(audio_url)
+                    req.add_header("User-Agent", _DY_UA)
+                    req.add_header("Referer", "https://www.douyin.com/")
+                    if cookie:
+                        req.add_header("Cookie", cookie)
+                    resp = urllib.request.urlopen(req, timeout=90)
+                    with open(tmp_path, "wb") as f:
+                        while True:
+                            chunk = resp.read(8192)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    # 重新检查
+                    file_size = os.path.getsize(tmp_path)
+                    if file_size < 1000:
+                        return jsonify({"error": "视频和音频 URL 均无法下载有效文件"}), 400
+                except Exception as e:
+                    return jsonify({"error": f"视频下载无效，音频回退也失败: {e}"}), 500
+            else:
+                snippet = header[:50].decode("utf-8", errors="replace")
+                return jsonify({"error": f"下载的文件不是有效音视频格式（开头: {snippet[:80]}）"}), 400
+
         # 调用 Whisper API（带重试，指数退避）
         whisper_err_msg = None
         transcript = None
@@ -841,7 +881,16 @@ def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
 
     ctx = ssl.create_default_context()
-    resp = urllib.request.urlopen(req, timeout=300, context=ctx)
+    try:
+        resp = urllib.request.urlopen(req, timeout=300, context=ctx)
+    except urllib.error.HTTPError as http_err:
+        # 读取错误响应体，获取具体原因
+        err_body = ""
+        try:
+            err_body = http_err.read().decode("utf-8", errors="replace")[:500]
+        except Exception:
+            pass
+        raise RuntimeError(f"Whisper HTTP {http_err.code}: {err_body}") from http_err
     result = json.loads(resp.read().decode())
 
     segments = []
