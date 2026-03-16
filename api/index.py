@@ -140,6 +140,7 @@ def fetch_videos():
             # 第二步：逐页获取视频
             keywords = keyword.split() if keyword else None
             all_videos = []
+            total_scanned = 0
             max_cursor = 0
             max_count = max_videos if max_videos > 0 else 9999
             page = 0
@@ -153,7 +154,7 @@ def fetch_videos():
                     "total": total_videos,
                 })
 
-                params = _build_base_params(sec_uid, max_cursor, count=20)
+                params = _build_base_params(sec_uid, max_cursor, count=35)
                 page_data = _douyin_api_request(
                     "https://www.douyin.com/aweme/v1/web/aweme/post/", params, cookie
                 )
@@ -163,6 +164,7 @@ def fetch_videos():
                     break
 
                 page_videos = []
+                total_scanned += len(aweme_list)
                 for item in aweme_list:
                     vid = item.get("aweme_id", "")
                     desc = item.get("desc", "无标题")
@@ -249,6 +251,7 @@ def fetch_videos():
                 "videos": all_videos,
                 "creator_name": creator_name,
                 "total": len(all_videos),
+                "total_scanned": total_scanned,
                 "method": "direct",
             })
 
@@ -809,7 +812,7 @@ def _fetch_videos_direct(
     max_count = max_videos if max_videos > 0 else 9999
 
     while len(all_videos) < max_count:
-        params = _build_base_params(sec_uid, max_cursor, count=20)
+        params = _build_base_params(sec_uid, max_cursor, count=35)
         data = _douyin_api_request(
             "https://www.douyin.com/aweme/v1/web/aweme/post/", params, cookie
         )
@@ -1369,24 +1372,22 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
         elif isinstance(transcript, str):
             text = transcript
 
+        # 纯文稿：去除口水词，不带时间戳，标准段落格式
         if segments and len(segments) > 1:
-            for seg in segments:
-                sp = doc.add_paragraph()
-                sp.paragraph_format.line_spacing = 1.8
-                start_sec = seg.get("start", 0)
-                ts = _format_ts(start_sec)
-                ts_run = sp.add_run(f"[{ts}] ")
-                _set_run_font(ts_run, "微软雅黑", 9)
-                ts_run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
-                seg_text = _remove_filler_words(seg.get("text", "").strip())
-                if seg_text:
-                    text_run = sp.add_run(seg_text)
-                    _set_run_font(text_run, "微软雅黑", 12)
+            # 将所有 segment 文本合并为完整段落
+            full_text = "".join(seg.get("text", "").strip() for seg in segments)
+            cleaned = _remove_filler_words(full_text)
         elif text:
             cleaned = _remove_filler_words(text)
-            cp = doc.add_paragraph(cleaned)
+        else:
+            cleaned = ""
+
+        if cleaned:
+            cp = doc.add_paragraph()
             cp.paragraph_format.line_spacing = 1.8
             cp.paragraph_format.first_line_indent = Pt(24)
+            run = cp.add_run(cleaned)
+            _set_run_font(run, "微软雅黑", 12)
 
         # 分隔线
         sep = doc.add_paragraph()
