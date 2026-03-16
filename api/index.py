@@ -144,14 +144,17 @@ def fetch_videos():
             max_cursor = 0
             max_count = max_videos if max_videos > 0 else 9999
             page = 0
+            total_pages = max(1, -(-total_videos // 35))  # ceil division
             fetch_start = time.time()
 
             while len(all_videos) < max_count:
                 page += 1
                 yield send_event("status", {
-                    "msg": f"扫描第 {page} 页（已扫描 {total_scanned} 个，匹配 {len(all_videos)} 个）...",
+                    "msg": f"正在扫描第 {page}/{total_pages} 页（已扫描 {total_scanned}，匹配 {len(all_videos)}）",
                     "fetched": len(all_videos),
                     "total": total_videos,
+                    "page": page,
+                    "total_pages": total_pages,
                 })
 
                 params = _build_base_params(sec_uid, max_cursor, count=35)
