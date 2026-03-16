@@ -31,11 +31,16 @@ _ENV_APIFY_TOKEN = os.environ.get("APIFY_API_TOKEN", "")
 _ENV_PROXY = os.environ.get("PROXY", "")
 
 
+def _clean_cookie(cookie: str) -> str:
+    """清理 Cookie 中的非法字符（换行、回车等）"""
+    return re.sub(r'[\r\n\t]+', '', cookie).strip()
+
+
 def _get_config(data: dict) -> dict:
     """合并请求参数和环境变量，环境变量作为默认值"""
     return {
         "openai_api_key": data.get("openai_api_key", "").strip() or _ENV_OPENAI_KEY,
-        "cookie": data.get("cookie", "").strip() or _ENV_COOKIE,
+        "cookie": _clean_cookie(data.get("cookie", "") or _ENV_COOKIE),
         "apify_token": data.get("apify_token", "").strip() or _ENV_APIFY_TOKEN,
         "proxy": data.get("proxy", "").strip() or _ENV_PROXY,
     }

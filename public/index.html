@@ -303,6 +303,62 @@
     font-size: 15px;
   }
 
+  /* ─── History ─── */
+  .history-section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .history-toggle {
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 500;
+    text-transform: none;
+  }
+  .history-list { margin-top: 12px; }
+  .history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    background: #f5f5f7;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-size: 14px;
+  }
+  .history-item:hover { background: #ededf0; }
+  .history-item .h-main {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .history-item .h-name { font-weight: 500; color: var(--text); }
+  .history-item .h-kw {
+    font-size: 12px;
+    color: var(--accent);
+    margin-left: 8px;
+  }
+  .history-item .h-time {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 12px;
+    white-space: nowrap;
+  }
+
   .hidden { display: none !important; }
 
   @media (max-width: 600px) {
@@ -337,6 +393,14 @@
     <button class="btn btn-primary" id="startBtn" onclick="startExtraction()">
       开始提取
     </button>
+    <!-- 历史记录 -->
+    <div class="history-section hidden" id="historySection">
+      <div class="history-header" onclick="toggleHistory()">
+        <span>最近搜索</span>
+        <span class="history-toggle" id="historyToggle">展开</span>
+      </div>
+      <div class="history-list hidden" id="historyList"></div>
+    </div>
   </div>
 
   <!-- 进度 -->
@@ -466,6 +530,7 @@ async function startExtraction() {
     STATE.creatorName = result.creator_name || '博主';
     setProgress(20);
     setStatus(`找到 ${STATE.videos.length} 个视频`, 'success');
+    saveToHistory(url, $('keyword').value.trim(), STATE.creatorName);
     STATE.videos.forEach(v => addTitle('▸ ' + v.title.substring(0, 50)));
 
     if (!STATE.videos.length) {
@@ -571,6 +636,63 @@ async function downloadDoc() {
     $('downloadBtn').textContent = '下载 Word 文档';
   }
 }
+
+// ─── 搜索历史 ───
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem('douyin-gpt-history') || '[]');
+  } catch(e) { return []; }
+}
+
+function saveToHistory(url, keyword, creatorName) {
+  const list = loadHistory();
+  // 去重（同 URL + keyword 的覆盖）
+  const idx = list.findIndex(h => h.url === url && h.keyword === keyword);
+  if (idx >= 0) list.splice(idx, 1);
+  list.unshift({
+    url, keyword, creatorName,
+    time: new Date().toLocaleDateString('zh-CN', {month:'numeric', day:'numeric', hour:'numeric', minute:'numeric'}),
+  });
+  // 最多保留 20 条
+  if (list.length > 20) list.length = 20;
+  localStorage.setItem('douyin-gpt-history', JSON.stringify(list));
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = loadHistory();
+  if (!list.length) { hide('historySection'); return; }
+  show('historySection');
+  const el = $('historyList');
+  el.innerHTML = '';
+  list.forEach(h => {
+    const d = document.createElement('div');
+    d.className = 'history-item';
+    const kwTag = h.keyword ? `<span class="h-kw">${h.keyword}</span>` : '';
+    const name = h.creatorName || h.url.substring(0, 30);
+    d.innerHTML = `<span class="h-main"><span class="h-name">${name}</span>${kwTag}</span><span class="h-time">${h.time}</span>`;
+    d.onclick = () => {
+      $('douyinUrl').value = h.url;
+      $('keyword').value = h.keyword || '';
+    };
+    el.appendChild(d);
+  });
+}
+
+function toggleHistory() {
+  const list = $('historyList');
+  const toggle = $('historyToggle');
+  if (list.classList.contains('hidden')) {
+    list.classList.remove('hidden');
+    toggle.textContent = '收起';
+  } else {
+    list.classList.add('hidden');
+    toggle.textContent = '展开';
+  }
+}
+
+// 页面加载时渲染历史
+renderHistory();
 
 let chatHistory = [];
 async function sendChat() {
