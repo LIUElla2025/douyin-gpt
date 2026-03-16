@@ -101,7 +101,7 @@ def resolve_url():
         return jsonify({"error": f"解析失败: {e}"}), 400
 
 
-# ─── 获取视频列表 ───
+# ─── 获取视频列表（流式 SSE） ───
 
 
 @app.route("/api/fetch-videos", methods=["POST"])
@@ -112,47 +112,128 @@ def fetch_videos():
     cookie = cfg["cookie"]
     keyword = data.get("keyword", "").strip()
     max_videos = data.get("max_videos", 0)
-    use_apify = data.get("use_apify", False)
-    apify_token = cfg["apify_token"]
 
     if not sec_uid:
         return jsonify({"error": "缺少 sec_uid"}), 400
+    if not cookie:
+        return jsonify({"error": "请配置抖音 Cookie"}), 400
 
-    # 优先直接调用抖音 API（轻量级，无 f2 依赖）
-    if not use_apify and cookie:
+    def sse_generate():
+        """SSE 流式生成：逐页推送视频列表，前端实时显示"""
+        import httpx
+
+        def send_event(event_type, data_dict):
+            return f"event: {event_type}\ndata: {json.dumps(data_dict, ensure_ascii=False)}\n\n"
+
         try:
-            videos, creator_name = _fetch_videos_direct(
-                sec_uid, cookie, max_videos, keyword
-            )
-            return jsonify({
-                "videos": videos,
+            # 第一步：获取用户信息
+            yield send_event("status", {"msg": "正在获取博主信息..."})
+            profile_data = _fetch_user_profile_direct(sec_uid, cookie)
+            user = profile_data.get("user", {})
+            creator_name = user.get("nickname", "")
+            total_videos = user.get("aweme_count", 0)
+
+            yield send_event("profile", {
                 "creator_name": creator_name,
-                "total": len(videos),
+                "total_videos": total_videos,
+            })
+
+            # 第二步：逐页获取视频
+            keywords = keyword.split() if keyword else None
+            all_videos = []
+            max_cursor = 0
+            max_count = max_videos if max_videos > 0 else 99999
+            page = 0
+
+            while len(all_videos) < max_count:
+                page += 1
+                yield send_event("status", {
+                    "msg": f"获取第 {page} 页...",
+                    "fetched": len(all_videos),
+                    "total": total_videos,
+                })
+
+                params = _build_base_params(sec_uid, max_cursor, count=20)
+                data = _douyin_api_request(
+                    "https://www.douyin.com/aweme/v1/web/aweme/post/", params, cookie
+                )
+
+                aweme_list = data.get("aweme_list", [])
+                if not aweme_list:
+                    break
+
+                page_videos = []
+                for item in aweme_list:
+                    vid = item.get("aweme_id", "")
+                    desc = item.get("desc", "无标题")
+                    title = re.sub(r"#\S+", "", desc).strip() or "无标题"
+                    duration = item.get("video", {}).get("duration", 0)
+                    if isinstance(duration, (int, float)) and duration > 10000:
+                        duration = duration // 1000
+                    music = item.get("music", {})
+                    play_url_list = (music.get("play_url") or {}).get("url_list", [])
+                    audio_url = play_url_list[0] if play_url_list else ""
+                    author = (item.get("author") or {}).get("nickname", creator_name)
+                    create_time = item.get("create_time", "")
+
+                    video = {
+                        "id": str(vid),
+                        "title": title,
+                        "raw_title": desc,
+                        "url": f"https://www.douyin.com/video/{vid}",
+                        "create_time": create_time,
+                        "duration": duration,
+                        "author": author,
+                        "audio_url": audio_url,
+                        "creator_name": creator_name,
+                    }
+
+                    if keywords:
+                        if _match_keyword(video, keywords):
+                            page_videos.append(video)
+                    else:
+                        page_videos.append(video)
+
+                all_videos.extend(page_videos)
+
+                # 推送本页获取到的视频
+                if page_videos:
+                    yield send_event("videos", {
+                        "videos": page_videos,
+                        "fetched": len(all_videos),
+                        "total": total_videos,
+                    })
+
+                if len(all_videos) >= max_count:
+                    break
+
+                has_more = data.get("has_more", False)
+                max_cursor = data.get("max_cursor", 0)
+                if not has_more or not max_cursor:
+                    break
+
+                time.sleep(0.3)
+
+            # 完成
+            yield send_event("done", {
+                "videos": all_videos,
+                "creator_name": creator_name,
+                "total": len(all_videos),
                 "method": "direct",
             })
-        except Exception as e:
-            if not apify_token:
-                return jsonify({"error": f"获取失败: {e}"}), 500
 
-    # Apify 备选
-    if apify_token:
-        try:
-            profile_url = f"https://www.douyin.com/user/{sec_uid}"
-            videos = _apify_fetch_videos(apify_token, profile_url, max_videos or 200)
-            creator_name = videos[0].get("author", "") if videos else ""
-            if keyword:
-                keywords = keyword.split()
-                videos = [v for v in videos if _match_keyword(v, keywords)]
-            return jsonify({
-                "videos": videos,
-                "creator_name": creator_name,
-                "total": len(videos),
-                "method": "apify",
-            })
         except Exception as e:
-            return jsonify({"error": f"Apify 获取失败: {e}"}), 500
+            yield send_event("error", {"error": str(e)})
 
-    return jsonify({"error": "请提供抖音 Cookie 或 Apify Token"}), 400
+    return Response(
+        sse_generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
 
 
 # ─── 转录单个视频 ───

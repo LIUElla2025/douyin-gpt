@@ -8,3 +8,4 @@ douyin_data/
 *.swp
 logs/
 .vercel/
+.vercel

@@ -498,6 +498,96 @@ async function api(endpoint, body) {
   return r;
 }
 
+async function fetchVideosSSE(secUid, keyword) {
+  return new Promise((resolve, reject) => {
+    STATE.videos = [];
+    STATE.creatorName = '';
+
+    const body = JSON.stringify({
+      sec_uid: secUid,
+      keyword: keyword,
+      max_videos: 0,
+    });
+
+    // 使用 fetch + ReadableStream 来消费 SSE（因为 EventSource 只支持 GET）
+    fetch('/api/fetch-videos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body,
+    }).then(resp => {
+      if (!resp.ok) {
+        return resp.json().then(d => { throw new Error(d.error || 'Error'); });
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      function processSSE(text) {
+        buffer += text;
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        let eventType = '';
+        let eventData = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            eventData = line.slice(6);
+          } else if (line === '' && eventType && eventData) {
+            handleSSEvent(eventType, JSON.parse(eventData));
+            eventType = '';
+            eventData = '';
+          }
+        }
+      }
+
+      function handleSSEvent(type, data) {
+        if (type === 'status') {
+          setStatus(data.msg, 'info');
+          if (data.total > 0 && data.fetched !== undefined) {
+            setProgress(8 + Math.min((data.fetched / data.total) * 12, 12));
+          }
+        } else if (type === 'profile') {
+          STATE.creatorName = data.creator_name || '博主';
+          addTitle(`博主: ${STATE.creatorName}（共 ${data.total_videos} 个视频）`, 'success');
+        } else if (type === 'videos') {
+          // 逐批添加视频标题
+          data.videos.forEach(v => {
+            STATE.videos.push(v);
+            addTitle('▸ ' + v.title.substring(0, 50));
+          });
+          setStatus(`已获取 ${data.fetched}/${data.total} 个视频...`, 'info');
+          if (data.total > 0) {
+            setProgress(8 + Math.min((data.fetched / data.total) * 12, 12));
+          }
+        } else if (type === 'done') {
+          STATE.videos = data.videos;
+          STATE.creatorName = data.creator_name || STATE.creatorName;
+          resolve(data);
+        } else if (type === 'error') {
+          reject(new Error(data.error));
+        }
+      }
+
+      function pump() {
+        return reader.read().then(({ done, value }) => {
+          if (done) {
+            if (buffer) processSSE('\n');
+            if (!STATE.videos.length) reject(new Error('未获取到视频'));
+            else resolve({ videos: STATE.videos, creator_name: STATE.creatorName });
+            return;
+          }
+          processSSE(decoder.decode(value, { stream: true }));
+          return pump();
+        });
+      }
+
+      return pump();
+    }).catch(reject);
+  });
+}
+
 async function startExtraction() {
   const url = $('douyinUrl').value.trim();
   if (!url) return alert('请输入抖音链接');
@@ -512,26 +602,21 @@ async function startExtraction() {
   startTimer();
 
   try {
+    // 解析链接
     setStatus('解析链接...', 'info');
     setProgress(3);
     const resolved = await api('resolve-url', { input: url });
     STATE.secUid = resolved.sec_uid;
     addTitle('链接解析成功', 'success');
 
+    // 流式获取视频列表
     setStatus('获取视频列表...', 'info');
     setProgress(8);
-    const result = await api('fetch-videos', {
-      sec_uid: STATE.secUid,
-      keyword: $('keyword').value.trim(),
-      max_videos: 0,
-    });
+    await fetchVideosSSE(STATE.secUid, $('keyword').value.trim());
 
-    STATE.videos = result.videos;
-    STATE.creatorName = result.creator_name || '博主';
     setProgress(20);
     setStatus(`找到 ${STATE.videos.length} 个视频`, 'success');
     saveToHistory(url, $('keyword').value.trim(), STATE.creatorName);
-    STATE.videos.forEach(v => addTitle('▸ ' + v.title.substring(0, 50)));
 
     if (!STATE.videos.length) {
       setStatus('未找到匹配的视频', 'warning');
@@ -541,7 +626,7 @@ async function startExtraction() {
       return;
     }
 
-    // 转录
+    // 转录阶段
     const queue = STATE.videos.filter(v => v.audio_url);
     if (!queue.length) {
       setStatus('没有可转录的视频', 'warning');
@@ -550,22 +635,24 @@ async function startExtraction() {
     }
 
     $('titleScroll').innerHTML = '';
+    addTitle(`开始转录 ${queue.length} 个视频...`, 'success');
     let ok = 0, fail = 0;
     for (let i = 0; i < queue.length; i++) {
       const v = queue[i];
-      setProgress(20 + (i / queue.length) * 70);
-      setStatus(`转录 ${i+1}/${queue.length}`, 'info');
-      addTitle('转录中: ' + v.title.substring(0, 45), 'active');
+      const pct = 20 + (i / queue.length) * 70;
+      setProgress(pct);
+      setStatus(`转录 ${i+1}/${queue.length}: ${v.title.substring(0, 25)}...`, 'info');
+      addTitle(`转录中: ${v.title.substring(0, 45)}`, 'active');
 
       try {
         const res = await api('transcribe', { audio_url: v.audio_url, video_url: v.url });
         v.transcript = res.transcript;
         ok++;
-        addTitle('完成: ' + v.title.substring(0, 45), 'success');
+        addTitle(`完成: ${v.title.substring(0, 45)}`, 'success');
       } catch (e) {
         fail++;
         v.transcript = null;
-        addTitle('失败: ' + v.title.substring(0, 40) + ' - ' + e.message, 'error');
+        addTitle(`失败: ${v.title.substring(0, 40)} - ${e.message}`, 'error');
       }
     }
 
