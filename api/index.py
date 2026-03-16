@@ -120,7 +120,6 @@ def fetch_videos():
 
     def sse_generate():
         """SSE 流式生成：逐页推送视频列表，前端实时显示"""
-        import httpx
 
         def send_event(event_type, data_dict):
             return f"event: {event_type}\ndata: {json.dumps(data_dict, ensure_ascii=False)}\n\n"
@@ -155,11 +154,11 @@ def fetch_videos():
                 })
 
                 params = _build_base_params(sec_uid, max_cursor, count=20)
-                data = _douyin_api_request(
+                page_data = _douyin_api_request(
                     "https://www.douyin.com/aweme/v1/web/aweme/post/", params, cookie
                 )
 
-                aweme_list = data.get("aweme_list", [])
+                aweme_list = page_data.get("aweme_list", [])
                 if not aweme_list:
                     break
 
@@ -217,8 +216,8 @@ def fetch_videos():
                 if len(all_videos) >= max_count:
                     break
 
-                has_more = data.get("has_more", False)
-                max_cursor = data.get("max_cursor", 0)
+                has_more = page_data.get("has_more", False)
+                max_cursor = page_data.get("max_cursor", 0)
                 if not has_more or not max_cursor:
                     break
 
@@ -305,6 +304,8 @@ def transcribe():
         file_size = os.path.getsize(tmp_path)
         if file_size < 1000:
             return jsonify({"error": f"音频文件太小({file_size}字节)"}), 400
+        if file_size > 25 * 1024 * 1024:
+            return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper 限制 25MB"}), 400
 
         # 调用 Whisper API（带重试）
         whisper_err_msg = None
@@ -638,7 +639,7 @@ def _fetch_videos_direct(
     keywords = keyword.split() if keyword else None
     all_videos = []
     max_cursor = 0
-    max_count = max_videos if max_videos > 0 else 99999
+    max_count = max_videos if max_videos > 0 else 200
 
     while len(all_videos) < max_count:
         params = _build_base_params(sec_uid, max_cursor, count=20)

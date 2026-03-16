@@ -452,6 +452,7 @@ let STATE = {
 function $(id) { return document.getElementById(id); }
 function show(id) { $(id).classList.remove('hidden'); }
 function hide(id) { $(id).classList.add('hidden'); }
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 function setProgress(pct) {
   $('progressFill').style.width = pct + '%';
@@ -674,11 +675,11 @@ function showResults() {
   show('resultCard');
   const total = STATE.videos.length;
   const done = STATE.videos.filter(v => v.transcript).length;
-  const audio = STATE.videos.filter(v => v.audio_url).length;
+  const hasMedia = STATE.videos.filter(v => v.video_download_url || v.audio_url).length;
 
   $('statsGrid').innerHTML = `
     <div class="stat-card"><div class="stat-num">${total}</div><div class="stat-label">视频</div></div>
-    <div class="stat-card"><div class="stat-num">${audio}</div><div class="stat-label">音频</div></div>
+    <div class="stat-card"><div class="stat-num">${hasMedia}</div><div class="stat-label">可转录</div></div>
     <div class="stat-card"><div class="stat-num">${done}</div><div class="stat-label">已转录</div></div>
   `;
 
@@ -687,10 +688,11 @@ function showResults() {
   STATE.videos.forEach(v => {
     const d = document.createElement('div');
     d.className = 'video-item';
+    const canTranscribe = v.video_download_url || v.audio_url;
     const badge = v.transcript
       ? '<span class="badge badge-done">已转录</span>'
-      : v.audio_url ? '<span class="badge badge-fail">失败</span>' : '<span class="badge badge-na">无音频</span>';
-    d.innerHTML = `<span class="video-title">${v.title}</span>${badge}`;
+      : canTranscribe ? '<span class="badge badge-fail">失败</span>' : '<span class="badge badge-na">无媒体</span>';
+    d.innerHTML = `<span class="video-title">${esc(v.title)}</span>${badge}`;
     list.appendChild(d);
   });
 
@@ -755,9 +757,9 @@ function renderHistory() {
   list.forEach(h => {
     const d = document.createElement('div');
     d.className = 'history-item';
-    const kwTag = h.keyword ? `<span class="h-kw">${h.keyword}</span>` : '';
+    const kwTag = h.keyword ? `<span class="h-kw">${esc(h.keyword)}</span>` : '';
     const name = h.creatorName || h.url.substring(0, 30);
-    d.innerHTML = `<span class="h-main"><span class="h-name">${name}</span>${kwTag}</span><span class="h-time">${h.time}</span>`;
+    d.innerHTML = `<span class="h-main"><span class="h-name">${esc(name)}</span>${kwTag}</span><span class="h-time">${esc(h.time)}</span>`;
     d.onclick = () => {
       $('douyinUrl').value = h.url;
       $('keyword').value = h.keyword || '';
