@@ -6,3 +6,5 @@ venv/
 douyin_data/
 .DS_Store
 *.swp
+logs/
+.vercel/
