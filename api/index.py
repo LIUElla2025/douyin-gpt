@@ -261,38 +261,60 @@ def transcribe():
     if not download_url:
         return jsonify({"error": "缺少音频/视频 URL"}), 400
 
+    tmp_path = None
     try:
-        # 下载音频到临时文件
         tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         tmp_path = tmp.name
         tmp.close()
 
-        try:
-            req = urllib.request.Request(download_url)
-            req.add_header("User-Agent", _DY_UA)
-            req.add_header("Referer", "https://www.douyin.com/")
+        # 下载音频（带重试 + 分块读取）
+        dl_err_msg = None
+        for attempt in range(3):
             try:
-                resp = urllib.request.urlopen(req, timeout=60)
+                req = urllib.request.Request(download_url)
+                req.add_header("User-Agent", _DY_UA)
+                req.add_header("Referer", "https://www.douyin.com/")
+                resp = urllib.request.urlopen(req, timeout=90)
                 with open(tmp_path, "wb") as f:
-                    f.write(resp.read())
-            except Exception as dl_err:
-                return jsonify({"error": f"音频下载失败: {dl_err}"}), 500
+                    while True:
+                        chunk = resp.read(8192)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                dl_err_msg = None
+                break
+            except Exception as e:
+                dl_err_msg = str(e)
+                time.sleep(1)
 
-            file_size = os.path.getsize(tmp_path)
-            if file_size < 1000:
-                return jsonify({"error": f"音频文件太小({file_size}字节)，URL: {download_url[:80]}"}), 400
+        if dl_err_msg:
+            return jsonify({"error": f"音频下载失败(重试3次): {dl_err_msg}"}), 500
 
-            # 调用 Whisper API
-            transcript = _call_whisper(tmp_path, openai_key, proxy)
-            return jsonify({"transcript": transcript})
+        file_size = os.path.getsize(tmp_path)
+        if file_size < 1000:
+            return jsonify({"error": f"音频文件太小({file_size}字节)"}), 400
 
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+        # 调用 Whisper API（带重试）
+        whisper_err_msg = None
+        transcript = None
+        for attempt in range(3):
+            try:
+                transcript = _call_whisper(tmp_path, openai_key, proxy)
+                break
+            except Exception as e:
+                whisper_err_msg = str(e)
+                time.sleep(2)
+
+        if transcript is None:
+            return jsonify({"error": f"Whisper API 失败(重试3次): {whisper_err_msg}"}), 500
+
+        return jsonify({"transcript": transcript})
 
     except Exception as e:
-        import traceback
-        return jsonify({"error": f"转录失败: {e}", "detail": traceback.format_exc()}), 500
+        return jsonify({"error": f"转录失败: {e}"}), 500
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 # ─── 生成 Word 文档 ───
