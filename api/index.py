@@ -147,6 +147,7 @@ def fetch_videos():
             total_pages = max(1, -(-total_videos // 35))  # ceil division
             fetch_start = time.time()
 
+            stop_reason = "已扫描全部视频"
             while len(all_videos) < max_count:
                 page += 1
                 yield send_event("status", {
@@ -164,6 +165,7 @@ def fetch_videos():
 
                 aweme_list = page_data.get("aweme_list", [])
                 if not aweme_list:
+                    stop_reason = f"第{page}页返回空数据"
                     break
 
                 page_videos = []
@@ -235,17 +237,23 @@ def fetch_videos():
                     })
 
                 if len(all_videos) >= max_count:
+                    stop_reason = f"已达到最大数量限制({max_count})"
                     break
 
                 has_more = page_data.get("has_more", False)
                 max_cursor = page_data.get("max_cursor", 0)
-                if not has_more or not max_cursor:
+                if not has_more:
+                    stop_reason = f"API返回has_more=false（已到末页）"
+                    break
+                if not max_cursor:
+                    stop_reason = f"API返回max_cursor=0（无下一页）"
                     break
 
                 time.sleep(0.3)
 
                 # 超时保护：250秒后停止（留 50 秒给 done 事件）
                 if time.time() - fetch_start > 250:
+                    stop_reason = f"超时保护（已运行250秒）"
                     yield send_event("status", {"msg": "接近超时限制，已停止获取更多视频"})
                     break
 
@@ -255,6 +263,8 @@ def fetch_videos():
                 "creator_name": creator_name,
                 "total": len(all_videos),
                 "total_scanned": total_scanned,
+                "total_pages_scanned": page,
+                "stop_reason": stop_reason,
                 "method": "direct",
             })
 

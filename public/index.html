@@ -644,6 +644,7 @@ async function fetchVideosSSE(secUid, keyword) {
           STATE.videos = data.videos;
           STATE.creatorName = data.creator_name || STATE.creatorName;
           STATE._totalScanned = data.total_scanned || 0;
+          STATE._stopReason = data.stop_reason || '';
           resolve(data);
         } else if (type === 'error') {
           reject(new Error(data.error));
@@ -783,7 +784,9 @@ async function doFullExtraction(url) {
 
     setProgress(20);
     const scannedInfo = STATE._totalScanned ? `（共扫描 ${STATE._totalScanned} 个视频）` : '';
-    setStatus(`找到 ${STATE.videos.length} 个匹配视频${scannedInfo}`, 'success');
+    const stopInfo = STATE._stopReason ? ` [${STATE._stopReason}]` : '';
+    setStatus(`找到 ${STATE.videos.length} 个匹配视频${scannedInfo}${stopInfo}`, 'success');
+    if (STATE._stopReason) addTitle(`扫描结束原因：${STATE._stopReason}`, 'info');
     saveToHistory(url, $('keyword').value.trim(), STATE.creatorName);
 
     // 缓存视频列表（含关键词）
