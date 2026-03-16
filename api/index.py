@@ -312,7 +312,7 @@ def transcribe():
         if file_size > 25 * 1024 * 1024:
             return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper 限制 25MB"}), 400
 
-        # 调用 Whisper API（带重试）
+        # 调用 Whisper API（带重试，指数退避）
         whisper_err_msg = None
         transcript = None
         for attempt in range(3):
@@ -321,7 +321,7 @@ def transcribe():
                 break
             except Exception as e:
                 whisper_err_msg = str(e)
-                time.sleep(2)
+                time.sleep(3 * (attempt + 1))
 
         if transcript is None:
             return jsonify({"error": f"Whisper API 失败(重试3次): {whisper_err_msg}"}), 500
@@ -808,11 +808,11 @@ def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
     client_kwargs = {"api_key": api_key}
     if proxy:
         client_kwargs["http_client"] = httpx.Client(
-            proxy=proxy, timeout=httpx.Timeout(300, connect=60)
+            proxy=proxy, timeout=httpx.Timeout(300, connect=120)
         )
     else:
         client_kwargs["http_client"] = httpx.Client(
-            timeout=httpx.Timeout(300, connect=60)
+            timeout=httpx.Timeout(300, connect=120)
         )
 
     client = OpenAI(**client_kwargs)
