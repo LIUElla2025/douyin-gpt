@@ -141,7 +141,7 @@ def fetch_videos():
             keywords = keyword.split() if keyword else None
             all_videos = []
             max_cursor = 0
-            max_count = max_videos if max_videos > 0 else 200
+            max_count = max_videos if max_videos > 0 else 9999
             page = 0
             fetch_start = time.time()
 
@@ -644,7 +644,7 @@ def _fetch_videos_direct(
     keywords = keyword.split() if keyword else None
     all_videos = []
     max_cursor = 0
-    max_count = max_videos if max_videos > 0 else 200
+    max_count = max_videos if max_videos > 0 else 9999
 
     while len(all_videos) < max_count:
         params = _build_base_params(sec_uid, max_cursor, count=20)
@@ -862,18 +862,119 @@ def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
 # ─── Word 文档生成 ───
 
 
+def _remove_filler_words(text: str) -> str:
+    """去除中文口水词/填充词"""
+    # 常见口水词列表
+    fillers = [
+        r"(?<=[。！？\s])嗯+[，、。]?",
+        r"(?<=[。！？\s])啊+[，、。]?",
+        r"(?<=[。！？\s])呃+[，、。]?",
+        r"(?<=[。！？\s])额+[，、。]?",
+        r"(?<=[\s，。])那个[，、]?(?=\S)",
+        r"(?<=[\s，。])就是说[，、]?",
+        r"(?<=[\s，。])然后的话[，、]?",
+        r"(?<=[\s，。])对不对[，、。]?",
+        r"(?<=[\s，。])是不是[，、。]?",
+        r"(?<=[\s，。])你知道吧[，、。]?",
+        r"(?<=[\s，。])就是嘛[，、。]?",
+        r"(?<=[\s，。])怎么说呢[，、。]?",
+    ]
+    # 独立出现的口水词（整句或句首）
+    standalone = [
+        r"^嗯+[，、。]?\s*",
+        r"^啊+[，、。]?\s*",
+        r"^呃+[，、。]?\s*",
+        r"^额+[，、。]?\s*",
+    ]
+    for pattern in fillers:
+        text = re.sub(pattern, "", text)
+    for pattern in standalone:
+        text = re.sub(pattern, "", text)
+    # 清理多余空格和重复标点
+    text = re.sub(r"\s{2,}", " ", text)
+    text = re.sub(r"[，、]{2,}", "，", text)
+    text = re.sub(r"[。]{2,}", "。", text)
+    return text.strip()
+
+
+def _set_run_font(run, font_name: str = "微软雅黑", size_pt: int = 12):
+    """设置 run 的中文字体（含 east_asia fallback）"""
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+
+    run.font.name = font_name
+    run.font.size = Pt(size_pt)
+    # 设置东亚字体
+    rpr = run._element.get_or_add_rPr()
+    rfonts = rpr.find(qn("w:rFonts"))
+    if rfonts is None:
+        from lxml import etree
+        rfonts = etree.SubElement(rpr, qn("w:rFonts"))
+    rfonts.set(qn("w:eastAsia"), font_name)
+
+
+def _add_bookmark(paragraph, bookmark_name: str):
+    """在段落中添加书签"""
+    from docx.oxml.ns import qn
+    from lxml import etree
+
+    tag_id = str(abs(hash(bookmark_name)) % 1000000)
+    start = etree.SubElement(paragraph._element, qn("w:bookmarkStart"))
+    start.set(qn("w:id"), tag_id)
+    start.set(qn("w:name"), bookmark_name)
+    end = etree.SubElement(paragraph._element, qn("w:bookmarkEnd"))
+    end.set(qn("w:id"), tag_id)
+
+
+def _add_hyperlink(paragraph, bookmark_name: str, text: str, font_size: int = 12):
+    """在段落中添加指向书签的超链接"""
+    from docx.oxml.ns import qn
+    from docx.shared import Pt, RGBColor
+    from lxml import etree
+
+    hyperlink = etree.SubElement(paragraph._element, qn("w:hyperlink"))
+    hyperlink.set(qn("w:anchor"), bookmark_name)
+
+    run_elem = etree.SubElement(hyperlink, qn("w:r"))
+    rpr = etree.SubElement(run_elem, qn("w:rPr"))
+
+    # 蓝色 + 下划线
+    color = etree.SubElement(rpr, qn("w:color"))
+    color.set(qn("w:val"), "0071E3")
+    underline = etree.SubElement(rpr, qn("w:u"))
+    underline.set(qn("w:val"), "single")
+    sz = etree.SubElement(rpr, qn("w:sz"))
+    sz.set(qn("w:val"), str(font_size * 2))
+    sz_cs = etree.SubElement(rpr, qn("w:szCs"))
+    sz_cs.set(qn("w:val"), str(font_size * 2))
+    # 字体
+    rfonts = etree.SubElement(rpr, qn("w:rFonts"))
+    rfonts.set(qn("w:eastAsia"), "微软雅黑")
+
+    text_elem = etree.SubElement(run_elem, qn("w:t"))
+    text_elem.text = text
+    text_elem.set(qn("xml:space"), "preserve")
+
+
 def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
     """生成 Word 文档，返回字节"""
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
     from docx.shared import Cm, Pt, RGBColor
 
     doc = Document()
 
-    # 默认样式
+    # 默认样式 — 使用中文字体
     style = doc.styles["Normal"]
     style.font.size = Pt(12)
-    style.font.name = "Arial"
+    style.font.name = "微软雅黑"
+    rpr = style.element.get_or_add_rPr()
+    rfonts = rpr.find(qn("w:rFonts"))
+    if rfonts is None:
+        from lxml import etree
+        rfonts = etree.SubElement(rpr, qn("w:rFonts"))
+    rfonts.set(qn("w:eastAsia"), "微软雅黑")
     style.paragraph_format.line_spacing = 1.5
 
     for section in doc.sections:
@@ -882,20 +983,20 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
         section.left_margin = Cm(3.18)
         section.right_margin = Cm(3.18)
 
-    # 封面
+    # ═══ 封面 ═══
     doc.add_paragraph()
     doc.add_paragraph()
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = title.add_run(creator_name)
-    run.font.size = Pt(36)
+    _set_run_font(run, "微软雅黑", 36)
     run.bold = True
     run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
 
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = subtitle.add_run("抖音视频文字稿合集")
-    run.font.size = Pt(20)
+    _set_run_font(run, "微软雅黑", 20)
     run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
 
     doc.add_paragraph()
@@ -904,31 +1005,33 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
     info = doc.add_paragraph()
     info.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = info.add_run(f"共 {total} 个视频 · 已转录 {transcribed} 个")
-    run.font.size = Pt(12)
+    _set_run_font(run, "微软雅黑", 12)
     run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
 
     date_p = doc.add_paragraph()
     date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = date_p.add_run(f"生成日期：{datetime.now().strftime('%Y年%m月%d日')}")
-    run.font.size = Pt(11)
+    _set_run_font(run, "微软雅黑", 11)
     run.font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
 
     doc.add_page_break()
 
-    # 目录
-    doc.add_heading("目 录", level=1)
+    # ═══ 目录（可点击跳转）═══
+    toc_heading = doc.add_heading("目 录", level=1)
     chapter_num = 0
     for v in videos:
         if v.get("transcript"):
             chapter_num += 1
             t = re.sub(r"#\S+", "", v.get("title", f"视频 {chapter_num}")).strip()[:60]
-            p = doc.add_paragraph(f"{chapter_num}. {t}")
+            bookmark_name = f"chapter_{chapter_num}"
+            p = doc.add_paragraph()
             p.paragraph_format.space_before = Pt(2)
             p.paragraph_format.space_after = Pt(2)
+            _add_hyperlink(p, bookmark_name, f"{chapter_num}. {t}", font_size=12)
 
     doc.add_page_break()
 
-    # 正文
+    # ═══ 正文 ═══
     chapter_num = 0
     for v in videos:
         transcript = v.get("transcript")
@@ -936,8 +1039,10 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
             continue
         chapter_num += 1
         t = re.sub(r"#\S+", "", v.get("title", f"视频 {chapter_num}")).strip()[:80]
+        bookmark_name = f"chapter_{chapter_num}"
 
-        doc.add_heading(f"{chapter_num}. {t}", level=2)
+        heading = doc.add_heading(f"{chapter_num}. {t}", level=2)
+        _add_bookmark(heading, bookmark_name)
 
         # 元信息
         meta_parts = []
@@ -957,10 +1062,10 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
         if meta_parts:
             mp = doc.add_paragraph(" | ".join(meta_parts))
             for r in mp.runs:
-                r.font.size = Pt(9)
+                _set_run_font(r, "微软雅黑", 9)
                 r.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
 
-        # 文字稿
+        # 文字稿（去除口水词）
         text = ""
         segments = []
         if isinstance(transcript, dict):
@@ -976,14 +1081,15 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
                 start_sec = seg.get("start", 0)
                 ts = _format_ts(start_sec)
                 ts_run = sp.add_run(f"[{ts}] ")
-                ts_run.font.size = Pt(9)
+                _set_run_font(ts_run, "微软雅黑", 9)
                 ts_run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
-                seg_text = seg.get("text", "").strip()
+                seg_text = _remove_filler_words(seg.get("text", "").strip())
                 if seg_text:
                     text_run = sp.add_run(seg_text)
-                    text_run.font.size = Pt(12)
+                    _set_run_font(text_run, "微软雅黑", 12)
         elif text:
-            cp = doc.add_paragraph(text)
+            cleaned = _remove_filler_words(text)
+            cp = doc.add_paragraph(cleaned)
             cp.paragraph_format.line_spacing = 1.8
             cp.paragraph_format.first_line_indent = Pt(24)
 
@@ -991,7 +1097,7 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
         sep = doc.add_paragraph()
         sep.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = sep.add_run("─" * 30)
-        run.font.size = Pt(10)
+        _set_run_font(run, "微软雅黑", 10)
         run.font.color.rgb = RGBColor(0xDD, 0xDD, 0xDD)
 
     # 输出字节
