@@ -400,12 +400,24 @@ def transcribe():
                 snippet = header[:50].decode("utf-8", errors="replace")
                 return jsonify({"error": f"下载的文件不是有效音视频格式（开头: {snippet[:80]}）"}), 400
 
+        # 如果是视频文件（MP4），先提取音频轨道为 WAV
+        # 解决抖音 H.265 视频导致 Whisper 解码失败的问题
+        whisper_file = tmp_path
+        extracted_audio = None
+        if tmp_path.endswith(".mp4"):
+            try:
+                extracted_audio = _extract_audio(tmp_path)
+                whisper_file = extracted_audio
+            except Exception as extract_err:
+                # 提取失败，仍尝试直接发送原文件
+                pass
+
         # 调用 Whisper API（带重试，指数退避）
         whisper_err_msg = None
         transcript = None
         for attempt in range(3):
             try:
-                transcript = _call_whisper(tmp_path, openai_key, proxy)
+                transcript = _call_whisper(whisper_file, openai_key, proxy)
                 break
             except Exception as e:
                 whisper_err_msg = str(e)
@@ -421,6 +433,8 @@ def transcribe():
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+        if extracted_audio and os.path.exists(extracted_audio):
+            os.unlink(extracted_audio)
 
 
 # ─── 生成 Word 文档 ───
@@ -892,6 +906,46 @@ def _normalize_video_list(items: list) -> list[dict]:
 
 
 # ─── Whisper 转录 ───
+
+
+def _extract_audio(video_path: str) -> str:
+    """用 PyAV 从视频中提取音频轨道，输出 16kHz mono WAV。
+    解决抖音 H.265 视频导致 Whisper 无法解码的问题。
+    """
+    import av as _av
+
+    audio_path = video_path.rsplit(".", 1)[0] + ".wav"
+    inp = _av.open(video_path)
+
+    # 找到音频流
+    audio_stream = None
+    for s in inp.streams:
+        if s.type == "audio":
+            audio_stream = s
+            break
+    if audio_stream is None:
+        inp.close()
+        raise RuntimeError("视频中没有音频轨道")
+
+    out = _av.open(audio_path, "w", format="wav")
+    out_stream = out.add_stream("pcm_s16le", rate=16000, layout="mono")
+
+    resampler = _av.audio.resampler.AudioResampler(
+        format="s16", layout="mono", rate=16000,
+    )
+
+    for frame in inp.decode(audio_stream):
+        for resampled in resampler.resample(frame):
+            for packet in out_stream.encode(resampled):
+                out.mux(packet)
+
+    # flush
+    for packet in out_stream.encode(None):
+        out.mux(packet)
+
+    out.close()
+    inp.close()
+    return audio_path
 
 
 def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
