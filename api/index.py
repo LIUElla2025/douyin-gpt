@@ -170,11 +170,12 @@ def fetch_videos():
                     duration = item.get("video", {}).get("duration", 0)
                     if isinstance(duration, (int, float)) and duration > 10000:
                         duration = duration // 1000
-                    # 视频下载URL（含口述音频）
+                    # 视频下载URL（取最低码率，减小文件体积）
                     bit_rates = item.get("video", {}).get("bit_rate", [])
                     video_download_url = ""
                     if bit_rates:
-                        play_addr = bit_rates[0].get("play_addr", {})
+                        lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
+                        play_addr = lowest.get("play_addr", {})
                         vurl_list = play_addr.get("url_list", [])
                         video_download_url = vurl_list[0] if vurl_list else ""
                     # 背景音乐URL（备选）
@@ -658,11 +659,12 @@ def _fetch_videos_direct(
             duration = item.get("video", {}).get("duration", 0)
             if isinstance(duration, (int, float)) and duration > 10000:
                 duration = duration // 1000
-            # 视频下载URL（含口述音频）
+            # 视频下载URL（取最低码率，减小文件体积）
             bit_rates = item.get("video", {}).get("bit_rate", [])
             video_download_url = ""
             if bit_rates:
-                play_addr = bit_rates[0].get("play_addr", {})
+                lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
+                play_addr = lowest.get("play_addr", {})
                 vurl_list = play_addr.get("url_list", [])
                 video_download_url = vurl_list[0] if vurl_list else ""
             # 背景音乐URL（备选）
