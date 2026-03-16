@@ -636,18 +636,30 @@ async function startExtraction() {
     }
 
     $('titleScroll').innerHTML = '';
-    addTitle(`开始转录 ${queue.length} 个视频...`, 'success');
-    let ok = 0, fail = 0;
-    for (let i = 0; i < queue.length; i++) {
-      const v = queue[i];
-      const pct = 20 + (i / queue.length) * 70;
+    // 先从缓存恢复已转录的结果
+    let cached = 0;
+    queue.forEach(v => {
+      const saved = loadTranscript(v.id);
+      if (saved) { v.transcript = saved; cached++; }
+    });
+    const todo = queue.filter(v => !v.transcript);
+    if (cached > 0) {
+      addTitle(`从缓存恢复 ${cached} 个已转录视频`, 'success');
+    }
+    addTitle(`需要转录 ${todo.length} 个视频...`, 'success');
+
+    let ok = cached, fail = 0;
+    for (let i = 0; i < todo.length; i++) {
+      const v = todo[i];
+      const pct = 20 + ((cached + i) / queue.length) * 70;
       setProgress(pct);
-      setStatus(`转录 ${i+1}/${queue.length}: ${v.title.substring(0, 25)}...`, 'info');
+      setStatus(`转录 ${cached + i + 1}/${queue.length}: ${v.title.substring(0, 25)}...`, 'info');
       addTitle(`转录中: ${v.title.substring(0, 45)}`, 'active');
 
       try {
         const res = await api('transcribe', { video_download_url: v.video_download_url, audio_url: v.audio_url, video_url: v.url });
         v.transcript = res.transcript;
+        saveTranscript(v.id, res.transcript);
         ok++;
         addTitle(`完成: ${v.title.substring(0, 45)}`, 'success');
       } catch (e) {
@@ -724,6 +736,15 @@ async function downloadDoc() {
     $('downloadBtn').disabled = false;
     $('downloadBtn').textContent = '下载 Word 文档';
   }
+}
+
+// ─── 转录缓存（断点续传）───
+function getCacheKey(videoId) { return 'dy-transcript-' + videoId; }
+function saveTranscript(videoId, transcript) {
+  try { localStorage.setItem(getCacheKey(videoId), JSON.stringify(transcript)); } catch(e) {}
+}
+function loadTranscript(videoId) {
+  try { const d = localStorage.getItem(getCacheKey(videoId)); return d ? JSON.parse(d) : null; } catch(e) { return null; }
 }
 
 // ─── 搜索历史 ───
