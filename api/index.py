@@ -170,16 +170,22 @@ def fetch_videos():
                     duration = item.get("video", {}).get("duration", 0)
                     if isinstance(duration, (int, float)) and duration > 10000:
                         duration = duration // 1000
-                    # 视频下载URL：优先用 play_addr（标准播放地址，含音频），
-                    # 其次用最低码率 bit_rate
+                    # 视频下载URL：优先用 download_addr（完整MP4，含音频+视频），
+                    # play_addr 是 DASH fMP4 格式，通常只含视频轨道无音频
                     video_obj = item.get("video", {})
                     video_download_url = ""
-                    # 方式1: play_addr（标准，保证有音频轨道）
-                    play_addr = video_obj.get("play_addr", {})
-                    pa_list = play_addr.get("url_list", [])
-                    if pa_list:
-                        video_download_url = pa_list[0]
-                    # 方式2: 最低码率（备选，文件更小但可能无音轨）
+                    # 方式1: download_addr（完整MP4，含音频轨道）
+                    download_addr = video_obj.get("download_addr", {})
+                    da_list = download_addr.get("url_list", [])
+                    if da_list:
+                        video_download_url = da_list[0]
+                    # 方式2: play_addr（DASH fMP4，可能仅含视频轨道）
+                    if not video_download_url:
+                        play_addr = video_obj.get("play_addr", {})
+                        pa_list = play_addr.get("url_list", [])
+                        if pa_list:
+                            video_download_url = pa_list[0]
+                    # 方式3: 最低码率（备选）
                     if not video_download_url:
                         bit_rates = video_obj.get("bit_rate", [])
                         if bit_rates:
@@ -280,6 +286,7 @@ def transcribe():
 
     # 优先用视频文件（含口述），其次背景音乐，最后视频页面URL
     download_url = video_download_url or audio_url or video_url
+    url_source = "video_download" if video_download_url else ("audio" if audio_url else "video_page")
     if not download_url:
         return jsonify({"error": "缺少音频/视频 URL"}), 400
 
@@ -433,7 +440,8 @@ def transcribe():
         if transcript is None:
             detail = whisper_err_msg or "未知错误"
             if extract_err_msg:
-                detail += f" | 音频提取也失败: {extract_err_msg}"
+                detail += f" | 音频提取失败: {extract_err_msg}"
+            detail += f" | URL来源: {url_source}"
             return jsonify({"error": f"Whisper API 失败: {detail}"}), 500
 
         return jsonify({"transcript": transcript})
@@ -775,13 +783,21 @@ def _fetch_videos_direct(
             duration = item.get("video", {}).get("duration", 0)
             if isinstance(duration, (int, float)) and duration > 10000:
                 duration = duration // 1000
-            # 视频下载URL：优先 play_addr，其次最低码率
+            # 视频下载URL：优先 download_addr（完整MP4含音频），play_addr是fMP4仅含视频
             video_obj = item.get("video", {})
             video_download_url = ""
-            play_addr = video_obj.get("play_addr", {})
-            pa_list = play_addr.get("url_list", [])
-            if pa_list:
-                video_download_url = pa_list[0]
+            # 方式1: download_addr（完整MP4，含音频轨道）
+            download_addr = video_obj.get("download_addr", {})
+            da_list = download_addr.get("url_list", [])
+            if da_list:
+                video_download_url = da_list[0]
+            # 方式2: play_addr（DASH fMP4，可能仅含视频轨道）
+            if not video_download_url:
+                play_addr = video_obj.get("play_addr", {})
+                pa_list = play_addr.get("url_list", [])
+                if pa_list:
+                    video_download_url = pa_list[0]
+            # 方式3: 最低码率（备选）
             if not video_download_url:
                 bit_rates = video_obj.get("bit_rate", [])
                 if bit_rates:
