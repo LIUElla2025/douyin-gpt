@@ -452,6 +452,18 @@ def transcribe():
             detail += f" | URL来源: {url_source}"
             return jsonify({"error": f"Whisper API 失败: {detail}"}), 500
 
+        # GPT 后处理：添加标点符号、整理文稿
+        raw_text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
+        if raw_text and openai_key:
+            try:
+                polished = _polish_transcript(raw_text, openai_key)
+                if polished:
+                    transcript["text"] = polished
+                    # 清空 segments（已合并为完整文稿）
+                    transcript["segments"] = []
+            except Exception:
+                pass  # 后处理失败不影响原始结果
+
         return jsonify({"transcript": transcript})
 
     except Exception as e:
@@ -1090,6 +1102,47 @@ def _extract_audio(video_path: str) -> str:
                 out.write(data[bpos:bpos + bsize])
 
     return audio_path
+
+
+def _polish_transcript(raw_text: str, api_key: str) -> str:
+    """用 GPT 给转录文稿添加标点符号，整理为标准文稿"""
+    import ssl
+
+    payload = json.dumps({
+        "model": "gpt-4.1-mini",
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "你是一个中文文稿整理专家。请将以下语音转录文本整理为标准文稿：\n"
+                    "1. 添加正确的中文标点符号（句号、逗号、问号、感叹号、顿号等）\n"
+                    "2. 去除口水词（嗯、啊、呃、那个、就是说等）\n"
+                    "3. 不要改变原文的意思和用词\n"
+                    "4. 不要添加任何解释或注释\n"
+                    "5. 直接输出整理后的文稿，不要有任何前缀说明"
+                ),
+            },
+            {"role": "user", "content": raw_text},
+        ],
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=payload,
+        method="POST",
+    )
+    req.add_header("Authorization", f"Bearer {api_key.strip()}")
+    req.add_header("Content-Type", "application/json")
+
+    ctx = ssl.create_default_context()
+    resp = urllib.request.urlopen(req, timeout=60, context=ctx)
+    result = json.loads(resp.read().decode())
+
+    choices = result.get("choices", [])
+    if choices:
+        return choices[0].get("message", {}).get("content", "").strip()
+    return ""
 
 
 def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
