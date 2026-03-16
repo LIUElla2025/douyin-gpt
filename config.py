@@ -14,8 +14,10 @@ load_dotenv(_env_path)
 
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+DOUYIN_COOKIE = os.getenv("DOUYIN_COOKIE", "")
 
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium")
 
 DATA_DIR = Path(os.getenv("DOUYIN_DATA_DIR", str(Path(__file__).resolve().parent / "douyin_data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)

@@ -1,9 +1,11 @@
 [server]
 headless = true
 port = 8501
+fileWatcherType = "none"
+runOnSave = false
 
 [theme]
-primaryColor = "#7C3AED"
+primaryColor = "#FF4B4B"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F0F2F6"
-textColor = "#1A1A2E"
+textColor = "#262730"

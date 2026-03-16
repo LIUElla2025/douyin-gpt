@@ -1,28 +1,31 @@
-"""博主 GPT 对话引擎 - 使用 Claude API"""
+"""博主 GPT 对话引擎 - 使用 OpenAI GPT-4.1（1M 上下文）"""
 
 import re
-from config import ANTHROPIC_API_KEY
+import httpx
+from config import OPENAI_API_KEY
 
-_anthropic = None
+_PROXY = "http://127.0.0.1:7890"
+
+_openai = None
 
 
-def _get_anthropic():
-    """延迟 import anthropic，避免未安装时 app 启动崩溃"""
-    global _anthropic
-    if _anthropic is None:
+def _get_openai():
+    """延迟 import openai"""
+    global _openai
+    if _openai is None:
         try:
-            import anthropic
-            _anthropic = anthropic
+            import openai
+            _openai = openai
         except ImportError:
             raise ImportError(
-                "anthropic 未安装。请运行: pip install anthropic"
+                "openai 未安装。请运行: pip install openai"
             )
-    return _anthropic
+    return _openai
 
-# Claude 上下文预算：中文字符 ≈ 1.5-2 tokens，需为对话历史留空间
-# Sonnet 200K tokens，system prompt 控制在 ~50K chars (≈75K tokens)，留 125K 给对话
-_MAX_PROFILE_CHARS = 40000
-_MAX_CONTEXT_CHARS = 10000
+# GPT-4.1 有 1M token 上下文，可以装下所有文稿
+# 中文字符 ≈ 1.5 tokens，500K 字符 ≈ 750K tokens，留 250K 给对话
+_MAX_PROFILE_CHARS = 500000
+_MAX_CONTEXT_CHARS = 30000
 
 
 def build_creator_profile(videos: list[dict]) -> str:
@@ -80,18 +83,14 @@ def build_system_prompt(creator_name: str, creator_profile: str, context_texts: 
 
 def _tokenize_chinese(text: str) -> list[str]:
     """简单的中文分词：按标点拆句，再提取2-4字的词组"""
-    # 去除标点后按2-3字滑窗提取词组，同时保留完整短句
     words = set()
-    # 按标点符号拆分成短句
     phrases = re.split(r'[，。？！、；：\s,.\?!;:\n]+', text)
     for phrase in phrases:
         phrase = phrase.strip()
         if not phrase:
             continue
-        # 短句本身作为关键词
         if 2 <= len(phrase) <= 6:
             words.add(phrase)
-        # 2-gram 和 3-gram
         for n in (2, 3):
             for i in range(len(phrase) - n + 1):
                 words.add(phrase[i:i+n])
@@ -113,7 +112,6 @@ def search_relevant_transcripts(query: str, videos: list[dict], top_k: int = 5) 
         if not text:
             continue
 
-        # 按词组匹配计分
         score = sum(1 for w in query_words if w in text)
         if score > 0:
             scored.append((score, v.get("title", ""), text))
@@ -127,7 +125,7 @@ def search_relevant_transcripts(query: str, videos: list[dict], top_k: int = 5) 
     parts = []
     total_len = 0
     for score, title, text in top:
-        snippet = text[:800]
+        snippet = text[:2000]
         if total_len + len(snippet) > _MAX_CONTEXT_CHARS:
             break
         parts.append(f"【{title}】\n{snippet}")
@@ -137,14 +135,17 @@ def search_relevant_transcripts(query: str, videos: list[dict], top_k: int = 5) 
 
 
 class CreatorChat:
-    """博主 GPT 对话管理器"""
+    """博主 GPT 对话管理器 — 使用 OpenAI GPT-4.1"""
 
     def __init__(self, creator_name: str, videos: list[dict]):
-        if not ANTHROPIC_API_KEY:
-            raise ValueError("请设置 ANTHROPIC_API_KEY 环境变量")
+        if not OPENAI_API_KEY:
+            raise ValueError("请设置 OPENAI_API_KEY 环境变量")
 
-        anthropic = _get_anthropic()
-        self.client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        openai = _get_openai()
+        self.client = openai.OpenAI(
+            api_key=OPENAI_API_KEY,
+            http_client=httpx.Client(proxy=_PROXY, timeout=120),
+        )
         self.creator_name = creator_name
         self.videos = videos
         self.creator_profile = build_creator_profile(videos)
@@ -167,29 +168,26 @@ class CreatorChat:
 
         # 保持历史在合理长度（最近20轮）
         recent_history = self.history[-40:]
-        # Claude API 要求消息必须以 user 角色开头
-        while recent_history and recent_history[0]["role"] != "user":
-            recent_history = recent_history[1:]
+
+        # 构建消息列表
+        messages = [{"role": "system", "content": system}] + recent_history
 
         try:
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+            response = self.client.chat.completions.create(
+                model="gpt-4.1",
                 max_tokens=2048,
-                system=system,
-                messages=recent_history,
+                messages=messages,
             )
 
-            if not response.content:
+            if not response.choices:
                 self.history.pop()
                 return "对话出错: 模型返回了空响应"
 
-            assistant_message = response.content[0].text
+            assistant_message = response.choices[0].message.content
             self.history.append({"role": "assistant", "content": assistant_message})
             return assistant_message
 
         except Exception as e:
-            # 错误消息不加入历史，避免污染后续对话
-            # 移除刚加入的用户消息，让用户可以重试
             self.history.pop()
             return f"对话出错: {str(e)}"
 

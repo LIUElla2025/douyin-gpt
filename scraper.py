@@ -1,15 +1,16 @@
 """抖音博主视频数据获取模块
 
 方案优先级:
-1. Apify 抖音专用 Actor（最稳定）
-2. douyin-tiktok-scraper PyPI 包（免费 fallback）
-3. yt-dlp DouyinIE（最后备选，不太稳定）
+1. f2 框架（免费、无数量限制、可获取全部视频）
+2. Apify 抖音专用 Actor（备选，有 50 个限制）
+3. yt-dlp DouyinIE（最后备选）
 """
 
 import json
 import subprocess
 import re
 import threading
+import asyncio
 import urllib.request
 import urllib.parse
 from pathlib import Path
@@ -57,8 +58,232 @@ def resolve_douyin_input(user_input: str) -> str:
     if user_input.startswith("MS4wLjABAAAA"):
         return f"https://www.douyin.com/user/{user_input}"
 
-    # 否则当作普通抖音号/UID
+    # 普通抖音号/UID — 尝试通过访问抖音主页获取 sec_uid
+    # natanielsantos/douyin-scraper 需要 sec_uid URL 才能正常抓取
+    try:
+        probe_url = f"https://www.douyin.com/user/{user_input}"
+        req = urllib.request.Request(probe_url)
+        req.add_header('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36')
+        resp = urllib.request.urlopen(req, timeout=10)
+        final_url = resp.url
+        # 从重定向后的 URL 中提取 sec_uid
+        sec_uid_match = re.search(r'sec_uid=([^&]+)', final_url)
+        if sec_uid_match:
+            sec_uid = urllib.parse.unquote(sec_uid_match.group(1))
+            print(f"  数字 ID {user_input} → sec_uid: {sec_uid[:30]}...")
+            return f"https://www.douyin.com/user/{sec_uid}"
+        user_match = re.search(r'/user/([^?&\s]+)', final_url)
+        if user_match and user_match.group(1) != user_input:
+            return f"https://www.douyin.com/user/{user_match.group(1)}"
+    except Exception as e:
+        print(f"  数字 ID 转 sec_uid 失败: {e}")
+
     return f"https://www.douyin.com/user/{user_input}"
+
+
+# ─── 方案0: f2 框架（免费、无限制）───
+
+
+def _get_douyin_cookie() -> str:
+    """从环境变量获取抖音 Cookie"""
+    import os
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+    return os.getenv("DOUYIN_COOKIE", "")
+
+
+def _extract_sec_uid(profile_url: str) -> str:
+    """从主页 URL 提取 sec_uid"""
+    match = re.search(r'/user/([^?&\s]+)', profile_url)
+    return match.group(1) if match else ""
+
+
+def _get_checkpoint_path(douyin_id: str) -> str:
+    """获取视频列表断点文件路径"""
+    safe_id = sanitize_id(douyin_id)
+    return str(TEMP_DIR / f"{safe_id}_videos.checkpoint.jsonl")
+
+
+def load_checkpoint_videos(douyin_id: str) -> list[dict]:
+    """加载断点文件中已获取的视频列表"""
+    cp_path = _get_checkpoint_path(douyin_id)
+    if not Path(cp_path).exists():
+        return []
+    videos = []
+    seen = set()
+    try:
+        with open(cp_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                v = json.loads(line)
+                vid = v.get("id", "")
+                if vid and vid not in seen:
+                    videos.append(v)
+                    seen.add(vid)
+    except Exception:
+        return []
+    return videos
+
+
+def clear_checkpoint(douyin_id: str):
+    """清理断点文件（全部完成后调用）"""
+    cp_path = Path(_get_checkpoint_path(douyin_id))
+    cp_path.unlink(missing_ok=True)
+
+
+def f2_get_creator_videos(douyin_id: str, max_videos: int = None, profile_url: str = None,
+                          progress_callback=None, keyword: str = "") -> list[dict]:
+    """通过 f2 框架获取博主视频列表 — 支持关键词边获取边过滤 + 断点续传"""
+    cookie = _get_douyin_cookie()
+    if not cookie:
+        print("  未设置 DOUYIN_COOKIE，跳过 f2 方案")
+        return []
+
+    sec_uid = _extract_sec_uid(profile_url) if profile_url else douyin_id
+    checkpoint_path = _get_checkpoint_path(douyin_id)
+
+    # 用 subprocess 运行独立的 f2_worker.py，完全隔离 Streamlit 环境
+    import sys
+    worker_script = str(Path(__file__).resolve().parent / "f2_worker.py")
+    python_exe = sys.executable
+
+    cmd = [python_exe, "-u", worker_script, sec_uid]  # -u 禁用缓冲
+    if max_videos:
+        cmd.append(str(max_videos))
+    if keyword:
+        cmd.extend(["--keyword", keyword])
+    cmd.extend(["--checkpoint", checkpoint_path])
+
+    # 通过环境变量传递 cookie（避免命令行参数长度/转义问题）
+    import os
+    env = os.environ.copy()
+    env["DOUYIN_COOKIE"] = cookie
+
+    print(f"  f2: 启动子进程获取视频...")
+    try:
+        import time as _time
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env=env,
+        )
+
+        # 后台线程读 stderr 进度，存到共享变量
+        import threading
+        stderr_lines = []
+        latest_progress = [0.0, "f2 启动中..."]  # [progress, text]
+        recent_titles = []  # 最近的视频标题或匹配标题
+        last_update_time = [_time.time()]  # 上次收到 stderr 更新的时间
+
+        def _read_stderr():
+            for line in proc.stderr:
+                line = line.strip()
+                if not line:
+                    continue
+                stderr_lines.append(line)
+                # 解析不同类型的进度消息
+                if line.startswith("f2_progress: "):
+                    msg = line[len("f2_progress: "):]
+                    # 解析 "已扫描 200/10483 | 匹配 5 个" 或 "已获取 200/10483 个视频"
+                    m = re.search(r'(\d+)/(\d+)', msg)
+                    if m:
+                        got, total = int(m.group(1)), int(m.group(2))
+                        latest_progress[0] = min(got / max(total, 1), 0.95)
+                    latest_progress[1] = msg
+                elif line.startswith("f2_match: "):
+                    title = line[len("f2_match: "):]
+                    recent_titles.append(f"✅ {title}")
+                    if len(recent_titles) > 10:
+                        recent_titles.pop(0)
+                elif line.startswith("f2_title: "):
+                    title = line[len("f2_title: "):]
+                    recent_titles.append(f"▸ {title}")
+                    if len(recent_titles) > 8:
+                        recent_titles.pop(0)
+                elif line.startswith("f2_info: "):
+                    latest_progress[1] = line[len("f2_info: "):]
+                last_update_time[0] = _time.time()
+                if line.startswith("f2_done: "):
+                    latest_progress[0] = 1.0
+                    latest_progress[1] = line[len("f2_done: "):]
+
+        stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
+        stderr_thread.start()
+
+        # 主线程轮询：检查进程是否结束 + 回调进度给 UI
+        start_time = _time.time()
+        stdout_chunks = []
+
+        while True:
+            # 无超时限制 — 视频多的博主可能需要很长时间
+
+            # 回调进度给 Streamlit（主线程，UI 能刷新）
+            if progress_callback:
+                elapsed = int(_time.time() - start_time)
+                idle_sec = int(_time.time() - last_update_time[0])
+                elapsed_str = f"{elapsed // 60}分{elapsed % 60:02d}秒" if elapsed >= 60 else f"{elapsed}秒"
+
+                # 进度文本附带最近获取的视频标题
+                progress_text = latest_progress[1]
+
+                # 长时间无新数据时显示耗时和活动提示
+                if idle_sec > 5:
+                    dots = "." * (1 + (elapsed % 3))
+                    progress_text += f" | 已耗时 {elapsed_str}，正在处理{dots}"
+                else:
+                    progress_text += f" | {elapsed_str}"
+
+                # 标题列表单独用 \n--- 分隔传递，避免混入 progress_bar text
+                if recent_titles:
+                    progress_text += "\n---\n" + "\n".join(recent_titles[-6:])
+                progress_callback(latest_progress[0], progress_text)
+
+            # 检查进程是否结束
+            retcode = proc.poll()
+            if retcode is not None:
+                # 进程结束，读取剩余 stdout
+                remaining = proc.stdout.read()
+                if remaining:
+                    stdout_chunks.append(remaining)
+                break
+
+            # 非阻塞读一小段 stdout（避免 pipe 缓冲区满导致死锁）
+            import select
+            readable, _, _ = select.select([proc.stdout], [], [], 0.5)
+            if readable:
+                chunk = proc.stdout.read(65536)
+                if chunk:
+                    stdout_chunks.append(chunk)
+
+        stderr_thread.join(timeout=5)
+        stdout = "".join(stdout_chunks)
+
+        if retcode != 0:
+            print(f"  f2 子进程失败 (exit {retcode})")
+            if stderr_lines:
+                print(f"  最后输出: {stderr_lines[-1]}")
+            return []
+
+        if not stdout or not stdout.strip():
+            print("  f2 子进程返回空数据")
+            return []
+
+        videos = json.loads(stdout)
+        print(f"  f2: 共获取 {len(videos)} 个视频")
+        return videos
+
+    except json.JSONDecodeError as e:
+        print(f"  f2 子进程返回无效 JSON: {e}")
+        return []
+    except Exception as e:
+        print(f"  f2 子进程异常: {type(e).__name__}: {e}")
+        return []
 
 
 # ─── 方案1: Apify 抖音 Actor ───
@@ -101,6 +326,11 @@ def apify_get_creator_videos(douyin_id: str, max_videos: int = 200, profile_url:
             run = client.actor(actor["id"]).call(run_input=actor["input"])
             items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
             if items:
+                # 保存原始数据用于调试
+                raw_path = TRANSCRIPTS_DIR / f"{sanitize_id(douyin_id)}_raw_apify.json"
+                with open(raw_path, "w", encoding="utf-8") as f:
+                    json.dump(items, f, ensure_ascii=False, indent=2, default=str)
+                print(f"  原始 Apify 数据已保存到: {raw_path}")
                 return _normalize_video_list(items)
         except Exception as e:
             print(f"  Apify Actor {actor['id']} 失败: {e}")
@@ -222,22 +452,9 @@ def ytdlp_get_creator_videos(douyin_url: str) -> list[dict]:
 # ─── 统一入口 ───
 
 
-def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=None) -> list[dict]:
-    """获取博主视频列表 — 自动尝试多种方案"""
-
-    # 先检查是否有缓存
-    safe_id = sanitize_id(douyin_id)
-    cache_path = TRANSCRIPTS_DIR / f"{safe_id}_videos.json"
-    if cache_path.exists():
-        try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                cached = json.load(f)
-            if cached:
-                if progress_callback:
-                    progress_callback(1.0, f"从缓存加载了 {len(cached)} 个视频")
-                return cached
-        except (json.JSONDecodeError, OSError):
-            pass
+def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=None,
+                       keyword: str = "") -> list[dict]:
+    """获取博主视频列表 — 支持关键词边获取边过滤"""
 
     # 解析用户输入（支持短链接、完整URL、抖音号）
     if progress_callback:
@@ -247,42 +464,26 @@ def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=
 
     errors = []
 
-    # 方案1: Apify
-    if APIFY_API_TOKEN:
-        if progress_callback:
-            progress_callback(0.1, "尝试 Apify 抖音 Actor...")
-        try:
-            videos = apify_get_creator_videos(douyin_id, max_videos, profile_url=profile_url)
-            if videos:
-                if progress_callback:
-                    progress_callback(1.0, f"通过 Apify 获取到 {len(videos)} 个视频")
-                return videos
-        except Exception as e:
-            errors.append(f"Apify: {e}")
-
-    # 方案2: PyPI 包
+    # f2 框架获取视频（有关键词时边获取边过滤）
     if progress_callback:
-        progress_callback(0.4, "尝试 douyin-tiktok-scraper...")
+        if keyword:
+            progress_callback(0.05, f"f2 搜索关键词「{keyword}」...")
+        else:
+            progress_callback(0.05, "f2 获取博主视频...")
     try:
-        videos = pypi_get_creator_videos(douyin_id, max_videos)
+        videos = f2_get_creator_videos(
+            douyin_id, max_videos, profile_url=profile_url,
+            progress_callback=progress_callback, keyword=keyword,
+        )
         if videos:
             if progress_callback:
-                progress_callback(1.0, f"通过 scraper 获取到 {len(videos)} 个视频")
+                progress_callback(1.0, f"通过 f2 获取到 {len(videos)} 个视频")
             return videos
+        else:
+            errors.append("f2: 返回空列表")
     except Exception as e:
-        errors.append(f"scraper: {e}")
-
-    # 方案3: yt-dlp
-    if progress_callback:
-        progress_callback(0.7, "尝试 yt-dlp...")
-    try:
-        videos = ytdlp_get_creator_videos(profile_url)
-        if videos:
-            if progress_callback:
-                progress_callback(1.0, f"通过 yt-dlp 获取到 {len(videos)} 个视频")
-            return videos
-    except Exception as e:
-        errors.append(f"yt-dlp: {e}")
+        errors.append(f"f2: {e}")
+        print(f"  f2 失败: {e}")
 
     error_detail = "\n".join(f"  - {e}" for e in errors) if errors else ""
     raise RuntimeError(
@@ -296,23 +497,39 @@ def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=
 
 
 def download_video_audio(video: dict, index: int) -> Path | None:
-    """下载视频并提取音频"""
-    url = video.get("share_url") or video.get("url") or video.get("video_url")
-    if not url:
-        return None
-
+    """下载视频音频 — 优先用 Apify 返回的直链，fallback 到 yt-dlp"""
     safe_title = re.sub(r'[^\w\u4e00-\u9fff]', '_', video.get("title", f"video_{index}"))[:50]
     output_path = AUDIO_DIR / f"{index:04d}_{safe_title}.mp3"
 
     if output_path.exists():
         return output_path
 
-    temp_pattern = f"{index:04d}_temp"
+    # 方案1: 直接从 musicMeta.playUrl 下载 (最快最稳定)
+    audio_url = video.get("audio_url", "")
+    if audio_url:
+        try:
+            req = urllib.request.Request(audio_url)
+            req.add_header('User-Agent', 'Mozilla/5.0')
+            resp = urllib.request.urlopen(req, timeout=30)
+            with open(output_path, 'wb') as f:
+                f.write(resp.read())
+            if output_path.stat().st_size > 1000:  # 至少 1KB
+                return output_path
+            else:
+                output_path.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"  直链下载失败 [{index}]: {e}")
+            output_path.unlink(missing_ok=True)
 
+    # 方案2: yt-dlp fallback
+    url = video.get("share_url") or video.get("url") or video.get("video_url")
+    if not url:
+        return None
+
+    temp_pattern = f"{index:04d}_temp"
     try:
         cmd = [
-            "yt-dlp",
-            "-x",
+            "yt-dlp", "-x",
             "--audio-format", "mp3",
             "--audio-quality", "5",
             "-o", str(TEMP_DIR / f"{temp_pattern}.%(ext)s"),
@@ -321,20 +538,16 @@ def download_video_audio(video: dict, index: int) -> Path | None:
             url,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-
         if result.returncode == 0:
             matched = list(TEMP_DIR.glob(f"{temp_pattern}*"))
             if matched:
                 matched[0].rename(output_path)
-                # 清理多余的临时文件
                 for f in matched[1:]:
                     f.unlink(missing_ok=True)
                 return output_path
-
     except FileNotFoundError:
-        print(f"  yt-dlp 未安装，无法下载 [{index}]")
+        pass  # yt-dlp not installed
     except subprocess.TimeoutExpired:
-        print(f"  下载超时 [{index}]: {video.get('title', '')[:30]}")
         for f in TEMP_DIR.glob(f"{temp_pattern}*"):
             f.unlink(missing_ok=True)
     except Exception as e:
@@ -369,14 +582,18 @@ def download_all_audios(videos: list[dict], progress_callback=None) -> list[dict
 
 
 def _normalize_video_list(items: list) -> list[dict]:
-    """将不同来源的视频数据标准化"""
+    """将不同来源的视频数据标准化
+
+    natanielsantos/douyin-scraper 返回:
+      id, text, createTime, url, authorMeta.name, statistics.diggCount, videoMeta.duration
+    其他来源可能用: desc, video_url, digg_count 等
+    """
     videos = []
     seen_ids = set()
 
     for idx, item in enumerate(items):
         vid = str(item.get("id", item.get("aweme_id", item.get("video_id", ""))))
 
-        # 没有 ID 的视频生成合成 ID，避免合并时数据丢失
         if not vid:
             vid = f"_no_id_{idx}"
 
@@ -384,15 +601,62 @@ def _normalize_video_list(items: list) -> list[dict]:
             continue
         seen_ids.add(vid)
 
+        # 描述文案: natanielsantos 用 text, 其他可能用 desc/title/description
+        raw_title = (
+            item.get("text")
+            or item.get("desc")
+            or item.get("title")
+            or item.get("description")
+            or "无标题"
+        )
+        # 保留原始标题（含 #标签）用于搜索，清理后的用于显示
+        title = re.sub(r'#\S+', '', raw_title).strip()
+
+        # 作者: natanielsantos 用嵌套 authorMeta.name
+        author_meta = item.get("authorMeta") or {}
+        author = (
+            author_meta.get("name")
+            or item.get("author")
+            or item.get("nickname")
+            or item.get("author_name")
+            or ""
+        )
+
+        # 统计: natanielsantos 用嵌套 statistics.diggCount
+        stats = item.get("statistics") or {}
+        digg_count = (
+            stats.get("diggCount")
+            or item.get("digg_count")
+            or item.get("diggCount")
+            or item.get("like_count")
+            or 0
+        )
+
+        # 时长: natanielsantos 用 videoMeta.duration (毫秒)
+        video_meta = item.get("videoMeta") or {}
+        duration = video_meta.get("duration") or item.get("duration") or 0
+        if duration > 10000:  # 毫秒转秒
+            duration = duration // 1000
+
+        # 音频直链: natanielsantos 返回 musicMeta.playUrl (直接 MP3)
+        music_meta = item.get("musicMeta") or {}
+        audio_url = music_meta.get("playUrl") or ""
+
+        # 视频播放链接: videoMeta.playUrl
+        video_play_url = video_meta.get("playUrl") or ""
+
         video = {
             "id": vid,
-            "title": item.get("desc", item.get("title", item.get("description", "无标题"))),
-            "url": item.get("video_url", item.get("videoUrl", item.get("url", ""))),
+            "title": title,
+            "raw_title": raw_title,
+            "url": item.get("url", item.get("video_url", item.get("videoUrl", ""))),
             "share_url": item.get("share_url", item.get("shareUrl", item.get("webpage_url", ""))),
-            "create_time": item.get("create_time", item.get("createTime", item.get("timestamp", ""))),
-            "duration": item.get("duration", 0),
-            "digg_count": item.get("digg_count", item.get("diggCount", item.get("like_count", 0))),
-            "author": item.get("author", item.get("nickname", item.get("author_name", ""))),
+            "create_time": item.get("createTime", item.get("create_time", item.get("timestamp", ""))),
+            "duration": duration,
+            "digg_count": digg_count,
+            "author": author,
+            "audio_url": audio_url,
+            "video_play_url": video_play_url,
         }
         videos.append(video)
 
