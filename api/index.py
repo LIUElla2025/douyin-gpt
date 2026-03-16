@@ -1020,17 +1020,7 @@ def _chat_with_creator(
     api_key: str,
     proxy: str = "",
 ) -> str:
-    """与博主 GPT 对话"""
-    import httpx
-    from openai import OpenAI
-
-    client_kwargs = {"api_key": api_key}
-    if proxy:
-        client_kwargs["http_client"] = httpx.Client(proxy=proxy, timeout=120)
-    else:
-        client_kwargs["http_client"] = httpx.Client(timeout=120)
-
-    client = OpenAI(**client_kwargs)
+    """与博主 GPT 对话（直接 HTTP，不依赖 httpx）"""
 
     # 构建博主资料
     profile_parts = []
@@ -1090,13 +1080,28 @@ def _chat_with_creator(
     messages.extend(history[-20:])
     messages.append({"role": "user", "content": message})
 
-    response = client.chat.completions.create(
-        model="gpt-4.1",
-        max_tokens=2048,
-        messages=messages,
-    )
+    # 直接 HTTP 调用 OpenAI Chat API（不依赖 httpx）
+    import ssl
+    payload = json.dumps({
+        "model": "gpt-4.1",
+        "max_tokens": 2048,
+        "messages": messages,
+    }).encode()
 
-    if not response.choices:
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=payload,
+        method="POST",
+    )
+    req.add_header("Authorization", f"Bearer {api_key.strip()}")
+    req.add_header("Content-Type", "application/json")
+
+    ctx = ssl.create_default_context()
+    resp = urllib.request.urlopen(req, timeout=120, context=ctx)
+    result = json.loads(resp.read().decode())
+
+    choices = result.get("choices", [])
+    if not choices:
         return "对话出错: 空响应"
 
-    return response.choices[0].message.content
+    return choices[0].get("message", {}).get("content", "")
