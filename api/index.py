@@ -336,16 +336,30 @@ def transcribe():
             # 主URL失败，尝试备用URL
             fallback = video_download_url if download_url == audio_url else audio_url
             if fallback and fallback != download_url:
-                _download_url(fallback, tmp_path, cookie, proxy)
-                file_size = os.path.getsize(tmp_path)
+                # 备用URL可能格式不同，需要用新的临时文件
+                new_suffix = ".mp4" if fallback == video_download_url else ".mp3"
+                new_tmp = tempfile.NamedTemporaryFile(suffix=new_suffix, delete=False)
+                new_tmp_path = new_tmp.name
+                new_tmp.close()
+                tmp_files.append(new_tmp_path)
+                _download_url(fallback, new_tmp_path, cookie, proxy)
+                file_size = os.path.getsize(new_tmp_path)
+                if file_size >= 1000:
+                    tmp_path = new_tmp_path  # 切换到备用文件
             if file_size < 1000:
                 return jsonify({"error": f"音频文件太小({file_size}字节)"}), 400
 
         if file_size > 25 * 1024 * 1024:
             # 超过25MB，尝试用更小的音频URL
             if download_url != audio_url and audio_url:
-                _download_url(audio_url, tmp_path, cookie, proxy)
-                file_size = os.path.getsize(tmp_path)
+                new_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                new_tmp_path = new_tmp.name
+                new_tmp.close()
+                tmp_files.append(new_tmp_path)
+                _download_url(audio_url, new_tmp_path, cookie, proxy)
+                file_size = os.path.getsize(new_tmp_path)
+                if file_size <= 25 * 1024 * 1024:
+                    tmp_path = new_tmp_path  # 切换到音频文件
             if file_size > 25 * 1024 * 1024:
                 return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
 
