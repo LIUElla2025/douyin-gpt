@@ -344,9 +344,9 @@ def transcribe():
                         "http": proxy, "https": proxy,
                     })
                     opener = urllib.request.build_opener(proxy_handler)
-                    resp = opener.open(req, timeout=90)
+                    resp = opener.open(req, timeout=30)
                 else:
-                    resp = urllib.request.urlopen(req, timeout=90)
+                    resp = urllib.request.urlopen(req, timeout=30)
                 with open(tmp_path, "wb") as f:
                     while True:
                         chunk = resp.read(8192)
@@ -377,9 +377,9 @@ def transcribe():
                     if proxy:
                         ph = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
                         opener = urllib.request.build_opener(ph)
-                        resp = opener.open(req, timeout=90)
+                        resp = opener.open(req, timeout=30)
                     else:
-                        resp = urllib.request.urlopen(req, timeout=90)
+                        resp = urllib.request.urlopen(req, timeout=30)
                     with open(tmp_path, "wb") as f:
                         while True:
                             chunk = resp.read(8192)
@@ -420,9 +420,9 @@ def transcribe():
                             "http": proxy, "https": proxy,
                         })
                         opener = urllib.request.build_opener(proxy_handler)
-                        resp = opener.open(req, timeout=90)
+                        resp = opener.open(req, timeout=30)
                     else:
-                        resp = urllib.request.urlopen(req, timeout=90)
+                        resp = urllib.request.urlopen(req, timeout=30)
                     with open(tmp_path, "wb") as f:
                         while True:
                             chunk = resp.read(8192)
@@ -1211,7 +1211,7 @@ def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
 
     ctx = ssl.create_default_context()
     try:
-        resp = urllib.request.urlopen(req, timeout=300, context=ctx)
+        resp = urllib.request.urlopen(req, timeout=45, context=ctx)
     except urllib.error.HTTPError as http_err:
         # 读取错误响应体，获取具体原因
         err_body = ""
