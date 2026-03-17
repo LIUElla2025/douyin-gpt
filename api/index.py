@@ -333,27 +333,28 @@ def transcribe():
         try:
             _download_url(download_url, tmp_path, cookie, proxy)
         except RuntimeError as dl_err:
-            if "403" in str(dl_err) and cookie:
-                # URL 过期，尝试通过抖音 API 获取最新 URL
-                aweme_id = video_id or _extract_aweme_id(video_url)
-                if aweme_id:
-                    fresh = _refresh_video_urls(aweme_id, cookie)
-                    if fresh:
-                        audio_url = fresh.get("audio_url", "") or audio_url
-                        video_download_url = fresh.get("video_download_url", "") or video_download_url
-                        download_url = audio_url or video_download_url
-                        suffix = ".mp3" if audio_url else ".mp4"
-                        new_tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-                        tmp_path = new_tmp.name
-                        new_tmp.close()
-                        tmp_files.append(tmp_path)
-                        _download_url(download_url, tmp_path, cookie, proxy)
-                    else:
-                        raise
-                else:
-                    raise
-            else:
+            if "403" not in str(dl_err) or not cookie:
                 raise
+            # URL 过期，尝试通过抖音 API 获取最新 URL
+            aweme_id = video_id or _extract_aweme_id(video_url)
+            if not aweme_id:
+                raise RuntimeError(f"403且无法提取aweme_id: video_url={video_url}")
+            fresh = _refresh_video_urls(aweme_id, cookie)
+            if not fresh or fresh.get("_error"):
+                raise RuntimeError(f"403且刷新URL失败: aweme_id={aweme_id}, detail={fresh}")
+            fresh_audio = fresh.get("audio_url", "")
+            fresh_video = fresh.get("video_download_url", "")
+            if not fresh_audio and not fresh_video:
+                raise RuntimeError(f"403且刷新返回空URL: {fresh}")
+            audio_url = fresh_audio or audio_url
+            video_download_url = fresh_video or video_download_url
+            download_url = audio_url or video_download_url
+            suffix = ".mp3" if fresh_audio else ".mp4"
+            new_tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp_path = new_tmp.name
+            new_tmp.close()
+            tmp_files.append(tmp_path)
+            _download_url(download_url, tmp_path, cookie, proxy)
 
         file_size = os.path.getsize(tmp_path)
         if file_size < 1000:
@@ -493,8 +494,9 @@ def _refresh_video_urls(aweme_id: str, cookie: str) -> dict:
                 video_download_url = pa_list[0]
 
         return {"audio_url": audio_url, "video_download_url": video_download_url}
-    except Exception:
-        return {}
+    except Exception as e:
+        # 不再静默吞掉异常，返回错误信息便于诊断
+        return {"_error": str(e)}
 
 
 def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = ""):
