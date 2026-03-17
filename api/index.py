@@ -376,17 +376,37 @@ def transcribe():
             except Exception as e:
                 print(f"[transcribe] 直接下载失败: {e}")
 
-        # --- 策略4：背景音乐（降级方案，至少能转录出东西） ---
+        # --- 策略3：背景音乐（降级方案，至少能转录出东西） ---
         if audio_url and not whisper_file:
             try:
-                tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                # 先用通用后缀下载，再根据文件头重命名
+                tmp = tempfile.NamedTemporaryFile(suffix=".dat", delete=False)
                 tmp_p = tmp.name
                 tmp.close()
                 tmp_files.append(tmp_p)
                 _download_url(audio_url, tmp_p, cookie, proxy, max_bytes=0)
-                if os.path.getsize(tmp_p) >= 1000:
-                    whisper_file = tmp_p
-                    print(f"[transcribe] 背景音乐降级, 大小={os.path.getsize(tmp_p)}")
+                sz = os.path.getsize(tmp_p)
+                if sz >= 1000:
+                    with open(tmp_p, "rb") as _af:
+                        hdr = _af.read(12)
+                    # 根据文件头检测实际格式
+                    if hdr[:3] == b'ID3' or (len(hdr) >= 2 and hdr[0] == 0xff and (hdr[1] & 0xe0) == 0xe0):
+                        ext = ".mp3"
+                    elif len(hdr) >= 8 and hdr[4:8] == b'ftyp':
+                        ext = ".m4a"
+                    elif hdr[:4] == b'fLaC':
+                        ext = ".flac"
+                    elif hdr[:4] == b'OggS':
+                        ext = ".ogg"
+                    elif hdr[:4] == b'RIFF':
+                        ext = ".wav"
+                    else:
+                        ext = ".m4a"  # 抖音常见格式
+                    new_path = tmp_p.rsplit(".", 1)[0] + ext
+                    os.rename(tmp_p, new_path)
+                    tmp_files.append(new_path)
+                    whisper_file = new_path
+                    print(f"[transcribe] 背景音乐降级, 大小={sz}, 格式={ext}, hdr={hdr[:8].hex()}")
             except Exception as e:
                 print(f"[transcribe] 背景音乐失败: {e}")
 
