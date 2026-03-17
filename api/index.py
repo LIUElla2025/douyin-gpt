@@ -303,6 +303,7 @@ def fetch_videos():
 def transcribe():
     data = request.json or {}
     cfg = _get_config(data)
+    audio_data_b64 = data.get("audio_data", "")  # 浏览器端下载的音频 base64
     audio_url = data.get("audio_url", "").strip()
     video_download_url = data.get("video_download_url", "").strip()
     video_url = data.get("video_url", "").strip()
@@ -314,98 +315,80 @@ def transcribe():
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
-    # 优先用音频流（原声，小文件），其次视频，最后页面URL
-    download_url = audio_url or video_download_url or video_url
-    if not download_url:
-        return jsonify({"error": "缺少音频/视频 URL"}), 400
-
-    # 所有临时文件路径，统一在最后清理
     tmp_files = []
 
     try:
-        # --- 第1步：下载（遇403自动刷新URL）---
-        suffix = ".mp3" if audio_url else ".mp4"
-        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-        tmp_path = tmp.name
-        tmp.close()
-        tmp_files.append(tmp_path)
-
-        try:
-            _download_url(download_url, tmp_path, cookie, proxy)
-        except RuntimeError as dl_err:
-            if "403" not in str(dl_err) or not cookie:
-                raise
-            # URL 过期，尝试通过抖音 API 获取最新 URL
-            aweme_id = video_id or _extract_aweme_id(video_url)
-            if not aweme_id:
-                raise RuntimeError(f"403且无法提取aweme_id: video_url={video_url}")
-            fresh = _refresh_video_urls(aweme_id, cookie)
-            if not fresh or fresh.get("_error"):
-                raise RuntimeError(f"403且刷新URL失败: aweme_id={aweme_id}, detail={fresh}")
-            fresh_audio = fresh.get("audio_url", "")
-            fresh_video = fresh.get("video_download_url", "")
-            if not fresh_audio and not fresh_video:
-                raise RuntimeError(f"403且刷新返回空URL: {fresh}")
-            audio_url = fresh_audio or audio_url
-            video_download_url = fresh_video or video_download_url
-            download_url = audio_url or video_download_url
-            suffix = ".mp3" if fresh_audio else ".mp4"
-            new_tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-            tmp_path = new_tmp.name
-            new_tmp.close()
+        if audio_data_b64:
+            # --- 模式A：浏览器已下载音频，直接用 base64 数据 ---
+            audio_bytes = base64.b64decode(audio_data_b64)
+            if len(audio_bytes) < 1000:
+                return jsonify({"error": f"音频数据太小({len(audio_bytes)}字节)"}), 400
+            if len(audio_bytes) > 25 * 1024 * 1024:
+                return jsonify({"error": f"音频过大({len(audio_bytes) // 1024 // 1024}MB)，Whisper限制25MB"}), 400
+            suffix = ".mp3"
+            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp_path = tmp.name
+            tmp.close()
             tmp_files.append(tmp_path)
-            _download_url(download_url, tmp_path, cookie, proxy)
+            with open(tmp_path, "wb") as f:
+                f.write(audio_bytes)
+        else:
+            # --- 模式B：服务端下载（备用，可能被403） ---
+            download_url = audio_url or video_download_url or video_url
+            if not download_url:
+                return jsonify({"error": "缺少音频/视频 URL"}), 400
 
-        file_size = os.path.getsize(tmp_path)
-        if file_size < 1000:
-            # 主URL失败，尝试备用URL
-            fallback = video_download_url if download_url == audio_url else audio_url
-            if fallback and fallback != download_url:
-                new_suffix = ".mp4" if fallback == video_download_url else ".mp3"
-                new_tmp = tempfile.NamedTemporaryFile(suffix=new_suffix, delete=False)
-                new_tmp_path = new_tmp.name
+            suffix = ".mp3" if audio_url else ".mp4"
+            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            tmp_files.append(tmp_path)
+
+            try:
+                _download_url(download_url, tmp_path, cookie, proxy)
+            except RuntimeError as dl_err:
+                if "403" not in str(dl_err) or not cookie:
+                    raise
+                aweme_id = video_id or _extract_aweme_id(video_url)
+                if not aweme_id:
+                    raise RuntimeError(f"403且无法提取aweme_id(请启用浏览器端下载)")
+                fresh = _refresh_video_urls(aweme_id, cookie)
+                if not fresh or fresh.get("_error"):
+                    raise RuntimeError(f"403且刷新失败(请启用浏览器端下载): {fresh}")
+                fresh_audio = fresh.get("audio_url", "")
+                fresh_video = fresh.get("video_download_url", "")
+                download_url = fresh_audio or fresh_video or download_url
+                suffix = ".mp3" if fresh_audio else ".mp4"
+                new_tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+                tmp_path = new_tmp.name
                 new_tmp.close()
-                tmp_files.append(new_tmp_path)
-                _download_url(fallback, new_tmp_path, cookie, proxy)
-                file_size = os.path.getsize(new_tmp_path)
-                if file_size >= 1000:
-                    tmp_path = new_tmp_path
+                tmp_files.append(tmp_path)
+                _download_url(download_url, tmp_path, cookie, proxy)
+
+            file_size = os.path.getsize(tmp_path)
             if file_size < 1000:
-                return jsonify({"error": f"音频文件太小({file_size}字节)"}), 400
-
-        if file_size > 25 * 1024 * 1024:
-            if download_url != audio_url and audio_url:
-                new_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-                new_tmp_path = new_tmp.name
-                new_tmp.close()
-                tmp_files.append(new_tmp_path)
-                _download_url(audio_url, new_tmp_path, cookie, proxy)
-                file_size = os.path.getsize(new_tmp_path)
-                if file_size <= 25 * 1024 * 1024:
-                    tmp_path = new_tmp_path
+                return jsonify({"error": f"音频文件太小({file_size}字节)，建议启用浏览器端下载"}), 400
             if file_size > 25 * 1024 * 1024:
                 return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
 
-        # --- 第2步：准备Whisper输入文件 ---
+        # --- 准备Whisper输入文件 ---
         whisper_file = tmp_path
-
         if tmp_path.endswith(".mp4"):
             try:
                 audio_path = _extract_audio(tmp_path)
                 tmp_files.append(audio_path)
                 whisper_file = audio_path
             except Exception:
-                # 提取失败，直接改扩展名试试
                 m4a_path = tmp_path.rsplit(".", 1)[0] + ".m4a"
                 import shutil
                 shutil.copy2(tmp_path, m4a_path)
                 tmp_files.append(m4a_path)
                 whisper_file = m4a_path
 
-        # --- 第3步：调用 Whisper ---
+        # --- 调用 Whisper ---
         transcript = _call_whisper(whisper_file, openai_key, proxy)
 
-        # --- 第4步：GPT 后处理加标点 ---
+        # --- GPT 后处理加标点 ---
         raw_text = transcript.get("text", "") if isinstance(transcript, dict) else ""
         if raw_text:
             try:

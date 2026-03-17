@@ -896,7 +896,34 @@ async function doTranscription() {
     let success = false;
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
       try {
-        const res = await api('transcribe', { video_download_url: v.video_download_url, audio_url: v.audio_url, video_url: v.url, video_id: v.id });
+        // 浏览器端下载音频，避免 Vercel 服务器被抖音 CDN 封禁
+        const audioUrl = v.audio_url || v.video_download_url;
+        let payload = { video_url: v.url, video_id: v.id };
+        if (audioUrl) {
+          try {
+            addTitle(`下载音频中...`, 'active');
+            const audioBlob = await fetch(audioUrl).then(r => {
+              if (!r.ok) throw new Error(`下载失败: ${r.status}`);
+              return r.blob();
+            });
+            const base64 = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result.split(',')[1]);
+              reader.onerror = reject;
+              reader.readAsDataURL(audioBlob);
+            });
+            payload.audio_data = base64;
+          } catch (dlErr) {
+            // 浏览器下载失败，回退到服务端下载
+            addTitle(`浏览器下载失败(${dlErr.message})，尝试服务端...`, 'info');
+            payload.audio_url = v.audio_url;
+            payload.video_download_url = v.video_download_url;
+          }
+        } else {
+          payload.audio_url = v.audio_url;
+          payload.video_download_url = v.video_download_url;
+        }
+        const res = await api('transcribe', payload);
         v.transcript = res.transcript;
         saveTranscript(v.id, res.transcript);
         ok++;
