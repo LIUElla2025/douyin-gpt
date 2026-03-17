@@ -6,110 +6,125 @@
 <title>抖音博主文字稿提取</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
   :root {
-    --text: #1d1d1f;
-    --text-secondary: #86868b;
-    --bg: #fbfbfd;
+    --text: #111827;
+    --text-secondary: #6b7280;
+    --text-muted: #9ca3af;
+    --bg: #f8fafc;
     --card-bg: #ffffff;
-    --accent: #0071e3;
-    --accent-hover: #0077ed;
-    --green: #34c759;
-    --orange: #ff9f0a;
-    --red: #ff3b30;
-    --border: rgba(0,0,0,0.06);
-    --shadow: 0 2px 12px rgba(0,0,0,0.08);
-    --shadow-lg: 0 8px 30px rgba(0,0,0,0.12);
-    --radius: 16px;
-    --radius-sm: 12px;
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --accent-light: rgba(99,102,241,0.08);
+    --accent-border: rgba(99,102,241,0.2);
+    --green: #10b981;
+    --green-light: rgba(16,185,129,0.1);
+    --orange: #f59e0b;
+    --red: #ef4444;
+    --border: #e5e7eb;
+    --border-light: #f3f4f6;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-lg: 16px;
+    --font: 'Noto Sans SC', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+    font-family: var(--font);
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
   }
 
-  /* ─── Hero ─── */
-  .hero {
-    text-align: center;
-    padding: 80px 24px 60px;
-    background: linear-gradient(180deg, #f5f5f7 0%, var(--bg) 100%);
-  }
-  .hero h1 {
-    font-size: 48px;
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    line-height: 1.1;
-    background: linear-gradient(135deg, var(--text) 0%, #6e6e73 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  .hero p {
-    font-size: 19px;
-    color: var(--text-secondary);
-    margin-top: 12px;
-    font-weight: 400;
-    letter-spacing: -0.01em;
-  }
-
   /* ─── Layout ─── */
-  .app-layout {
+  .app-shell {
     display: flex;
-    min-height: calc(100vh - 200px);
+    height: 100vh;
+    overflow: hidden;
   }
 
   /* ─── Sidebar ─── */
   .sidebar {
-    width: 260px;
-    min-width: 260px;
-    background: var(--card-bg);
+    width: 280px;
+    min-width: 280px;
+    background: #ffffff;
     border-right: 1px solid var(--border);
-    padding: 20px 0;
-    overflow-y: auto;
-    position: sticky;
-    top: 0;
-    height: calc(100vh - 200px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
-  .sidebar-header {
-    padding: 0 20px 16px;
-    font-size: 13px;
+  .sidebar-brand {
+    padding: 24px 20px 20px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .sidebar-brand h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .sidebar-brand p {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .sidebar-section-title {
+    padding: 16px 20px 8px;
+    font-size: 11px;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 8px;
+    letter-spacing: 0.08em;
   }
+  .sidebar-list {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 16px;
+  }
+  .sidebar-list::-webkit-scrollbar { width: 4px; }
+  .sidebar-list::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 2px; }
   .sidebar-empty {
-    padding: 24px 20px;
-    font-size: 13px;
-    color: #c7c7cc;
+    padding: 32px 20px;
     text-align: center;
-    line-height: 1.6;
+  }
+  .sidebar-empty-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 12px;
+    background: var(--border-light);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sidebar-empty-icon svg { width: 24px; height: 24px; color: var(--text-muted); }
+  .sidebar-empty-text {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
   }
   .avatar-item {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 20px;
+    padding: 10px 20px;
     cursor: pointer;
-    transition: background 0.15s;
-    border-left: 3px solid transparent;
+    transition: all 0.15s;
+    margin: 2px 8px;
+    border-radius: var(--radius-sm);
   }
-  .avatar-item:hover { background: #f5f5f7; }
+  .avatar-item:hover { background: var(--border-light); }
   .avatar-item.active {
-    background: rgba(0,113,227,0.06);
-    border-left-color: var(--accent);
+    background: var(--accent-light);
   }
   .avatar-icon {
     width: 36px;
     height: 36px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), #5856d6);
+    border-radius: 10px;
     color: white;
     display: flex;
     align-items: center;
@@ -118,12 +133,11 @@
     font-weight: 700;
     flex-shrink: 0;
   }
-  .avatar-info {
-    flex: 1;
-    overflow: hidden;
-  }
+  .avatar-icon.video-type { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+  .avatar-icon.corpus-type { background: linear-gradient(135deg, #10b981, #34d399); }
+  .avatar-info { flex: 1; overflow: hidden; }
   .avatar-name {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--text);
     white-space: nowrap;
@@ -132,104 +146,157 @@
   }
   .avatar-meta {
     font-size: 11px;
-    color: var(--text-secondary);
-    margin-top: 2px;
+    color: var(--text-muted);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .avatar-delete {
     opacity: 0;
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     border: none;
     background: none;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     cursor: pointer;
-    font-size: 14px;
+    font-size: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 4px;
+    border-radius: 6px;
     flex-shrink: 0;
+    transition: all 0.15s;
   }
   .avatar-item:hover .avatar-delete { opacity: 1; }
-  .avatar-delete:hover { color: var(--red); background: rgba(255,59,48,0.1); }
+  .avatar-delete:hover { color: var(--red); background: rgba(239,68,68,0.1); }
 
-  /* ─── Container ─── */
-  .container {
-    max-width: 680px;
+  /* ─── Main ─── */
+  .main {
     flex: 1;
+    overflow-y: auto;
+    background: var(--bg);
+  }
+  .main-inner {
+    max-width: 640px;
     margin: 0 auto;
-    padding: 0 24px 80px;
+    padding: 40px 32px 80px;
+  }
+
+  /* ─── Page Header ─── */
+  .page-header {
+    margin-bottom: 32px;
+  }
+  .page-header h2 {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .page-header p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-top: 6px;
   }
 
   /* ─── Card ─── */
   .card {
     background: var(--card-bg);
-    border-radius: var(--radius);
-    padding: 32px;
-    margin-bottom: 20px;
-    box-shadow: var(--shadow);
+    border-radius: var(--radius-lg);
+    padding: 28px;
+    margin-bottom: 16px;
     border: 1px solid var(--border);
-    transition: box-shadow 0.3s ease;
+    box-shadow: var(--shadow-sm);
   }
-  .card:hover { box-shadow: var(--shadow-lg); }
+
+  /* ─── Tabs ─── */
+  .tab-bar {
+    display: inline-flex;
+    background: var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    margin-bottom: 24px;
+  }
+  .tab-btn {
+    padding: 8px 20px;
+    border: none;
+    background: none;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font);
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    background: white;
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+    font-weight: 600;
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
 
   /* ─── Form ─── */
-  .form-group { margin-bottom: 20px; }
+  .form-group { margin-bottom: 18px; }
   .form-group label {
     display: block;
     font-size: 13px;
     font-weight: 500;
-    color: var(--text-secondary);
+    color: var(--text);
     margin-bottom: 6px;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
+  }
+  .form-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 4px;
   }
   input[type="text"], input[type="number"] {
     width: 100%;
-    padding: 14px 18px;
-    border: 1.5px solid rgba(0,0,0,0.1);
+    padding: 10px 14px;
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    font-size: 16px;
-    font-family: inherit;
+    font-size: 14px;
+    font-family: var(--font);
     outline: none;
-    transition: all 0.2s ease;
-    background: #fafafa;
+    transition: all 0.2s;
+    background: white;
     color: var(--text);
   }
   input:focus {
     border-color: var(--accent);
-    background: #fff;
-    box-shadow: 0 0 0 4px rgba(0,113,227,0.1);
+    box-shadow: 0 0 0 3px var(--accent-light);
   }
-  input::placeholder { color: #c7c7cc; }
-  .row { display: flex; gap: 14px; }
-  .row > * { flex: 1; }
+  input::placeholder { color: var(--text-muted); }
 
   /* ─── Button ─── */
   .btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
     width: 100%;
-    padding: 16px 32px;
+    padding: 10px 24px;
     border: none;
-    border-radius: 980px;
-    font-size: 17px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
     font-weight: 600;
-    font-family: inherit;
+    font-family: var(--font);
     cursor: pointer;
-    transition: all 0.2s ease;
-    letter-spacing: -0.01em;
+    transition: all 0.15s;
   }
   .btn-primary {
     background: var(--accent);
     color: white;
   }
-  .btn-primary:hover { background: var(--accent-hover); transform: scale(1.01); }
-  .btn-primary:active { transform: scale(0.99); }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:active { transform: scale(0.98); }
   .btn-primary:disabled {
-    background: #d2d2d7;
+    background: #d1d5db;
     cursor: not-allowed;
     transform: none;
   }
@@ -237,27 +304,59 @@
     background: var(--green);
     color: white;
   }
-  .btn-success:hover { filter: brightness(1.05); transform: scale(1.01); }
+  .btn-success:hover { background: #059669; }
   .btn-secondary {
-    background: #f5f5f7;
+    background: white;
     color: var(--text);
-    border: 1.5px solid rgba(0,0,0,0.1);
+    border: 1px solid var(--border);
   }
-  .btn-secondary:hover { background: #ededf0; }
-  .btn-row { display: flex; gap: 10px; margin-top: 10px; }
-  .btn-row .btn { flex: 1; padding: 12px 16px; font-size: 15px; }
+  .btn-secondary:hover { background: var(--border-light); }
+  .btn-row { display: flex; gap: 8px; margin-top: 12px; }
+  .btn-row .btn { flex: 1; }
+
+  /* ─── Upload ─── */
+  .upload-area {
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 32px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--border-light);
+    margin-bottom: 18px;
+  }
+  .upload-area:hover { border-color: var(--accent); background: var(--accent-light); }
+  .upload-area.has-file { border-color: var(--green); background: var(--green-light); border-style: solid; }
+  .upload-area input[type="file"] { display: none; }
+  .upload-icon {
+    width: 44px;
+    height: 44px;
+    margin: 0 auto 10px;
+    background: white;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border);
+  }
+  .upload-icon svg { width: 22px; height: 22px; color: var(--text-muted); }
+  .upload-area.has-file .upload-icon svg { color: var(--green); }
+  .upload-text { font-size: 13px; color: var(--text-secondary); }
+  .upload-text b { color: var(--accent); font-weight: 500; }
+  .upload-filename { font-size: 13px; color: var(--green); font-weight: 500; margin-top: 8px; }
 
   /* ─── Progress ─── */
   .progress-wrap {
-    background: rgba(0,0,0,0.04);
-    border-radius: 6px;
-    height: 6px;
+    background: var(--border-light);
+    border-radius: 4px;
+    height: 4px;
     overflow: hidden;
-    margin: 16px 0;
+    margin: 14px 0;
   }
   .progress-fill {
     height: 100%;
-    border-radius: 6px;
+    border-radius: 4px;
     background: var(--accent);
     transition: width 0.4s ease;
     width: 0%;
@@ -266,87 +365,92 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 16px;
-    border-radius: 980px;
-    font-size: 14px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
     font-weight: 500;
   }
-  .pill-info { background: rgba(0,113,227,0.08); color: var(--accent); }
-  .pill-success { background: rgba(52,199,89,0.1); color: #248a3d; }
-  .pill-error { background: rgba(255,59,48,0.1); color: var(--red); }
-  .pill-warning { background: rgba(255,159,10,0.1); color: #c77c00; }
+  .pill-info { background: var(--accent-light); color: var(--accent); }
+  .pill-success { background: var(--green-light); color: #059669; }
+  .pill-error { background: rgba(239,68,68,0.08); color: var(--red); }
+  .pill-warning { background: rgba(245,158,11,0.1); color: #d97706; }
   .elapsed {
-    font-size: 13px;
-    color: var(--text-secondary);
+    font-size: 12px;
+    color: var(--text-muted);
     text-align: right;
     margin-top: 4px;
+    font-variant-numeric: tabular-nums;
   }
 
   /* ─── Title Scroll ─── */
   .title-scroll {
     max-height: 200px;
     overflow-y: auto;
-    margin-top: 16px;
-    padding: 16px;
-    background: #fafafa;
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: var(--border-light);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
+    font-size: 13px;
   }
-  .title-scroll::-webkit-scrollbar { width: 4px; }
-  .title-scroll::-webkit-scrollbar-thumb { background: #d1d1d6; border-radius: 2px; }
+  .title-scroll::-webkit-scrollbar { width: 3px; }
+  .title-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
   .title-item {
-    padding: 6px 0;
-    font-size: 14px;
+    padding: 4px 0;
     color: var(--text-secondary);
     border-bottom: 1px solid rgba(0,0,0,0.03);
     line-height: 1.5;
   }
   .title-item:last-child { border-bottom: none; }
-  .title-item.success { color: #248a3d; }
-  .title-item.active { color: #c77c00; }
+  .title-item.success { color: #059669; }
+  .title-item.active { color: #d97706; }
   .title-item.error { color: var(--red); }
+  .title-item.info { color: var(--accent); }
 
   /* ─── Stats ─── */
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin: 20px 0;
+    gap: 10px;
+    margin-bottom: 18px;
   }
   .stat-card {
     text-align: center;
-    padding: 20px 12px;
-    background: #f5f5f7;
+    padding: 16px 10px;
+    background: var(--border-light);
     border-radius: var(--radius-sm);
   }
   .stat-num {
-    font-size: 32px;
+    font-size: 28px;
     font-weight: 700;
     color: var(--text);
     letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
   }
   .stat-label {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin-top: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
     font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 
   /* ─── Video List ─── */
   .video-list {
-    max-height: 320px;
+    max-height: 280px;
     overflow-y: auto;
-    margin: 16px 0;
+    margin-bottom: 18px;
   }
+  .video-list::-webkit-scrollbar { width: 3px; }
+  .video-list::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
   .video-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 0;
-    border-bottom: 1px solid rgba(0,0,0,0.04);
-    font-size: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 13px;
   }
   .video-item:last-child { border-bottom: none; }
   .video-title {
@@ -358,150 +462,98 @@
   }
   .badge {
     font-size: 11px;
-    font-weight: 600;
-    padding: 3px 10px;
-    border-radius: 980px;
-    margin-left: 12px;
-    letter-spacing: 0.02em;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: 10px;
+    flex-shrink: 0;
   }
-  .badge-done { background: rgba(52,199,89,0.12); color: #248a3d; }
-  .badge-fail { background: rgba(255,59,48,0.1); color: var(--red); }
-  .badge-na { background: rgba(0,0,0,0.05); color: var(--text-secondary); }
+  .badge-done { background: var(--green-light); color: #059669; }
+  .badge-fail { background: rgba(239,68,68,0.08); color: var(--red); }
+  .badge-na { background: var(--border-light); color: var(--text-muted); }
 
   /* ─── Chat ─── */
   .chat-box {
-    max-height: 400px;
+    max-height: 380px;
     overflow-y: auto;
     padding: 16px;
-    background: #f5f5f7;
-    border-radius: var(--radius-sm);
-    margin-bottom: 16px;
+    background: var(--border-light);
+    border-radius: var(--radius);
+    margin-bottom: 14px;
   }
+  .chat-box::-webkit-scrollbar { width: 3px; }
+  .chat-box::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
   .chat-bubble {
-    margin-bottom: 12px;
-    padding: 12px 16px;
-    border-radius: 18px;
-    font-size: 15px;
-    line-height: 1.5;
-    max-width: 80%;
+    margin-bottom: 10px;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.6;
+    max-width: 85%;
     word-wrap: break-word;
   }
   .chat-bubble.user {
     background: var(--accent);
     color: white;
     margin-left: auto;
-    border-bottom-right-radius: 6px;
+    border-bottom-right-radius: 4px;
   }
   .chat-bubble.bot {
     background: white;
     color: var(--text);
     border: 1px solid var(--border);
-    border-bottom-left-radius: 6px;
+    border-bottom-left-radius: 4px;
   }
   .chat-input-row {
     display: flex;
-    gap: 10px;
+    gap: 8px;
   }
-  .chat-input-row input { flex: 1; border-radius: 980px; }
+  .chat-input-row input {
+    flex: 1;
+    border-radius: 20px;
+    padding: 10px 16px;
+  }
   .chat-input-row button {
     width: auto;
-    padding: 14px 28px;
-    border-radius: 980px;
+    padding: 10px 20px;
+    border-radius: 20px;
+    font-size: 13px;
   }
-
-  /* ─── Tabs ─── */
-  .tab-bar {
-    display: flex;
-    gap: 0;
-    margin-bottom: 24px;
-    border-bottom: 2px solid var(--border);
-  }
-  .tab-btn {
-    flex: 1;
-    padding: 12px 16px;
-    border: none;
-    background: none;
-    font-size: 14px;
-    font-weight: 500;
-    font-family: inherit;
-    color: var(--text-secondary);
-    cursor: pointer;
-    position: relative;
-    transition: color 0.2s;
-  }
-  .tab-btn:hover { color: var(--text); }
-  .tab-btn.active {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  .tab-btn.active::after {
-    content: '';
-    position: absolute;
-    bottom: -2px;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: var(--accent);
-    border-radius: 1px;
-  }
-  .tab-panel { display: none; }
-  .tab-panel.active { display: block; }
-
-  /* ─── Upload Corpus ─── */
-  .upload-area {
-    border: 2px dashed rgba(0,0,0,0.12);
-    border-radius: var(--radius-sm);
-    padding: 28px 20px;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.2s;
-    background: #fafafa;
-    margin-bottom: 16px;
-  }
-  .upload-area:hover { border-color: var(--accent); background: rgba(0,113,227,0.03); }
-  .upload-area.has-file { border-color: var(--green); background: rgba(52,199,89,0.05); }
-  .upload-area input[type="file"] { display: none; }
-  .upload-icon { font-size: 28px; margin-bottom: 8px; }
-  .upload-text { font-size: 14px; color: var(--text-secondary); }
-  .upload-filename { font-size: 14px; color: var(--text); font-weight: 500; margin-top: 6px; }
 
   /* ─── History ─── */
   .history-section {
-    margin-top: 20px;
-    padding-top: 20px;
-    border-top: 1px solid var(--border);
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border-light);
   }
   .history-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     cursor: pointer;
-    font-size: 13px;
-    color: var(--text-secondary);
+    font-size: 12px;
+    color: var(--text-muted);
     font-weight: 500;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
   }
   .history-toggle {
     font-size: 12px;
     color: var(--accent);
     font-weight: 500;
-    text-transform: none;
   }
-  .history-list { margin-top: 12px; }
+  .history-list { margin-top: 10px; }
   .history-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 14px;
-    margin-bottom: 6px;
-    background: #f5f5f7;
-    border-radius: 10px;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    background: var(--border-light);
+    border-radius: 8px;
     cursor: pointer;
     transition: background 0.15s;
-    font-size: 14px;
+    font-size: 13px;
   }
-  .history-item:hover { background: #ededf0; }
+  .history-item:hover { background: var(--border); }
   .history-item .h-main {
     flex: 1;
     overflow: hidden;
@@ -510,25 +562,25 @@
   }
   .history-item .h-name { font-weight: 500; color: var(--text); }
   .history-item .h-kw {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--accent);
-    margin-left: 8px;
+    margin-left: 6px;
   }
   .history-item .h-time {
     font-size: 11px;
-    color: var(--text-secondary);
-    margin-left: 12px;
+    color: var(--text-muted);
+    margin-left: 10px;
     white-space: nowrap;
   }
 
   /* ─── Resume Banner ─── */
   .resume-banner {
-    background: rgba(0,113,227,0.06);
-    border: 1.5px solid rgba(0,113,227,0.15);
+    background: var(--accent-light);
+    border: 1px solid var(--accent-border);
     border-radius: var(--radius-sm);
-    padding: 16px;
-    margin-bottom: 20px;
-    font-size: 14px;
+    padding: 14px;
+    margin-bottom: 18px;
+    font-size: 13px;
     color: var(--text);
     line-height: 1.5;
   }
@@ -536,64 +588,77 @@
 
   .hidden { display: none !important; }
 
+  /* ─── Responsive ─── */
   @media (max-width: 800px) {
-    .app-layout { flex-direction: column; }
+    .app-shell { flex-direction: column; height: auto; min-height: 100vh; }
     .sidebar {
       width: 100%;
       min-width: 100%;
-      height: auto;
-      max-height: 200px;
-      position: relative;
+      max-height: 180px;
       border-right: none;
       border-bottom: 1px solid var(--border);
     }
+    .sidebar-brand { padding: 16px 20px 14px; }
+    .sidebar-brand h1 { font-size: 16px; }
+    .main { overflow-y: visible; }
+    .main-inner { padding: 24px 16px 60px; }
   }
   @media (max-width: 600px) {
-    .hero h1 { font-size: 32px; }
-    .hero p { font-size: 16px; }
-    .hero { padding: 48px 20px 36px; }
-    .card { padding: 24px; }
-    .row { flex-direction: column; gap: 12px; }
+    .page-header h2 { font-size: 20px; }
+    .card { padding: 20px; }
     .stats-grid { grid-template-columns: 1fr 1fr; }
     .btn-row { flex-direction: column; }
+    .tab-bar { display: flex; }
+    .tab-btn { flex: 1; text-align: center; }
   }
 </style>
 </head>
 <body>
 
-<div class="hero">
-  <h1>文字稿提取</h1>
-  <p>输入抖音博主链接，一键转录全部视频为 Word 文档</p>
-</div>
+<div class="app-shell">
 
-<div class="app-layout">
-
-<!-- 侧边栏：AI 分身列表 -->
-<div class="sidebar" id="sidebar">
-  <div class="sidebar-header">AI 分身</div>
-  <div id="avatarList">
-    <div class="sidebar-empty">完成博主视频转录后<br>分身将出现在这里</div>
+<!-- Sidebar -->
+<div class="sidebar">
+  <div class="sidebar-brand">
+    <h1>QuantSight AI</h1>
+    <p>文字稿提取 & AI 分身</p>
+  </div>
+  <div class="sidebar-section-title">AI 分身</div>
+  <div class="sidebar-list" id="avatarList">
+    <div class="sidebar-empty">
+      <div class="sidebar-empty-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.118a7.5 7.5 0 0115 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.5-1.632z"/></svg>
+      </div>
+      <div class="sidebar-empty-text">提取视频文字稿或上传文档<br>即可创建 AI 分身</div>
+    </div>
   </div>
 </div>
 
-<div class="container">
+<!-- Main Content -->
+<div class="main">
+<div class="main-inner">
 
-  <!-- 创建分身：Tab 切换 -->
+  <div class="page-header">
+    <h2>创建 AI 分身</h2>
+    <p>从抖音视频或文档中提取知识，创建可对话的 AI</p>
+  </div>
+
+  <!-- Tab Card -->
   <div class="card">
     <div class="tab-bar">
       <button class="tab-btn active" onclick="switchTab('douyin')">抖音博主提取</button>
       <button class="tab-btn" onclick="switchTab('upload')">上传文档</button>
     </div>
 
-    <!-- Tab 1: 抖音博主 -->
+    <!-- Tab 1: Douyin -->
     <div class="tab-panel active" id="tabDouyin">
       <div class="form-group">
         <label>抖音博主链接</label>
-        <input type="text" id="douyinUrl" placeholder="粘贴分享链接 或 输入抖音号，如 wangboshiyuz">
+        <input type="text" id="douyinUrl" placeholder="粘贴分享链接或输入抖音号">
       </div>
       <div class="form-group">
-        <label>关键词筛选</label>
-        <input type="text" id="keyword" placeholder="可选，空格分隔多个关键词">
+        <label>关键词筛选 <span class="form-hint">可选，空格分隔多个</span></label>
+        <input type="text" id="keyword" placeholder="留空则提取全部视频">
       </div>
       <div class="resume-banner hidden" id="resumeBanner">
         <strong id="resumeInfo"></strong>
@@ -614,21 +679,24 @@
       </div>
     </div>
 
-    <!-- Tab 2: 上传文档 -->
+    <!-- Tab 2: Upload -->
     <div class="tab-panel" id="tabUpload">
       <div class="form-group">
         <label>分身名称</label>
-        <input type="text" id="corpusName" placeholder="给这个 AI 分身起个名字">
+        <input type="text" id="corpusName" placeholder="给 AI 分身起个名字">
       </div>
       <div class="upload-area" id="uploadArea" onclick="if(event.target===this||!event.target.closest('input'))$('corpusFile').click()">
         <input type="file" id="corpusFile" accept=".docx,.txt,.md,.pdf" onchange="onFileSelected(this)" onclick="event.stopPropagation()">
-        <div class="upload-icon">+</div>
-        <div class="upload-text">点击上传文档（支持 .docx .txt .md .pdf）</div>
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></svg>
+        </div>
+        <div class="upload-text"><b>点击上传</b>或拖拽文件到此处</div>
+        <div class="upload-text" style="margin-top:4px;font-size:12px">支持 .docx .txt .md .pdf</div>
         <div class="upload-filename hidden" id="uploadFilename"></div>
       </div>
       <div class="form-group">
-        <label>特殊要求（可选）</label>
-        <input type="text" id="corpusInstructions" placeholder="例如：只用第三章的内容 / 用专业术语回答 / 模仿作者口吻">
+        <label>特殊要求 <span class="form-hint">可选</span></label>
+        <input type="text" id="corpusInstructions" placeholder="如：只用第三章 / 模仿作者口吻 / 用专业术语">
       </div>
       <button class="btn btn-primary" id="uploadBtn" onclick="createCorpusAvatar()">
         创建分身
@@ -636,7 +704,7 @@
     </div>
   </div>
 
-  <!-- 进度 -->
+  <!-- Progress -->
   <div class="card hidden" id="progressCard">
     <div id="statusPill" class="status-pill pill-info">准备中...</div>
     <div class="progress-wrap">
@@ -646,7 +714,7 @@
     <div class="title-scroll hidden" id="titleScroll"></div>
   </div>
 
-  <!-- 结果 -->
+  <!-- Results -->
   <div class="card hidden" id="resultCard">
     <div class="stats-grid" id="statsGrid"></div>
     <div class="video-list" id="videoList"></div>
@@ -655,10 +723,10 @@
     </button>
   </div>
 
-  <!-- 对话 -->
+  <!-- Chat -->
   <div class="card hidden" id="chatCard">
     <div class="chat-box" id="chatBox">
-      <div class="chat-bubble bot" id="chatGreeting">你好！我是这位博主的 AI 分身，有什么想聊的？</div>
+      <div class="chat-bubble bot" id="chatGreeting">你好！有什么想聊的？</div>
     </div>
     <div class="chat-input-row">
       <input type="text" id="chatInput" placeholder="输入你的问题..." onkeypress="if(event.key==='Enter')sendChat()">
@@ -667,8 +735,9 @@
   </div>
 
 </div>
+</div>
 
-</div><!-- /app-layout -->
+</div><!-- /app-shell -->
 
 <!-- Hidden fields for server-fallback config -->
 <input type="hidden" id="cookie" value="">
@@ -748,7 +817,6 @@ async function api(endpoint, body) {
 const CACHE_PREFIX = 'dy-';
 
 function _cacheKey(secUid, keyword) {
-  // 缓存 key = sec_uid + 关键词，不同关键词搜索不会冲突
   const kw = (keyword || '').trim();
   return CACHE_PREFIX + 'videos-' + secUid + (kw ? '-kw-' + kw : '');
 }
@@ -765,7 +833,6 @@ function loadVideoList(secUid, keyword) {
     const raw = localStorage.getItem(_cacheKey(secUid, keyword));
     if (!raw) return null;
     const data = JSON.parse(raw);
-    // 缓存 7 天有效
     if (Date.now() - data.savedAt > 7 * 24 * 3600 * 1000) return null;
     return data;
   } catch(e) { return null; }
@@ -782,7 +849,6 @@ function loadTranscript(videoId) {
   } catch(e) { return null; }
 }
 
-// 恢复视频列表中已缓存的转录结果
 function restoreTranscripts(videos) {
   let count = 0;
   videos.forEach(v => {
@@ -806,21 +872,16 @@ async function fetchVideosSSE(secUid, keyword) {
     const prevMatched = STATE.videos.length;
     const result = await _fetchVideosOnce(secUid, keyword, resumeCursor, resumePage, totalScanned, prevMatched);
 
-    // 续传时视频已通过 SSE 'videos' 事件实时 push 到 STATE.videos，无需重复添加
-
     totalScanned = result.total_scanned || totalScanned;
     STATE._totalScanned = totalScanned;
     STATE._stopReason = result.stop_reason || '';
 
-    // 如果是超时且有续传游标，自动继续
     if (result.stop_reason === 'timeout' && result.resume_cursor) {
       resumeCursor = result.resume_cursor;
       resumePage = result.resume_page || 0;
-      addTitle(`⏳ 第 ${round} 轮扫描超时，已扫描 ${totalScanned} 个，自动续传...`, 'info');
+      addTitle(`第 ${round} 轮扫描超时，已扫描 ${totalScanned} 个，自动续传...`, 'info');
       continue;
     }
-
-    // 正常结束
     break;
   }
 
@@ -892,7 +953,6 @@ function _fetchVideosOnce(secUid, keyword, startCursor, startPage, prevScanned, 
             setProgress(8 + Math.min((data.fetched / data.total) * 12, 12));
           }
         } else if (type === 'done') {
-          // 首轮：done里有完整视频列表；续传轮：只有本轮新增的
           if (!startCursor) {
             STATE.videos = data.videos;
           }
@@ -922,13 +982,10 @@ function _fetchVideosOnce(secUid, keyword, startCursor, startPage, prevScanned, 
 }
 
 // ─── 主流程 ───
-
-// 用户点击「开始提取」
 async function startExtraction() {
   const url = $('douyinUrl').value.trim();
   if (!url) return alert('请输入抖音链接');
 
-  // 先解析 sec_uid
   $('startBtn').disabled = true;
   $('startBtn').textContent = '解析中...';
 
@@ -936,7 +993,6 @@ async function startExtraction() {
     const resolved = await api('resolve-url', { input: url });
     STATE.secUid = resolved.sec_uid;
 
-    // 检查是否有缓存（含关键词匹配）
     const kw = $('keyword').value.trim();
     const cached = loadVideoList(STATE.secUid, kw);
     if (cached && cached.videos.length > 0) {
@@ -950,11 +1006,9 @@ async function startExtraction() {
       show('resumeBanner');
       hide('startBtn');
 
-      // 暂存缓存数据
       STATE._cachedData = cached;
       STATE._cachedUrl = url;
     } else {
-      // 无缓存，直接开始
       await doFullExtraction(url);
     }
   } catch(e) {
@@ -965,7 +1019,6 @@ async function startExtraction() {
   }
 }
 
-// 用户选择「继续上次」
 async function resumeExtraction() {
   hide('resumeBanner');
   show('startBtn');
@@ -979,9 +1032,7 @@ async function resumeExtraction() {
   STATE._corpusText = '';
   STATE._corpusInstructions = '';
 
-  // 恢复转录缓存
   restoreTranscripts(STATE.videos);
-
   saveToHistory(STATE._cachedUrl, $('keyword').value.trim(), STATE.creatorName);
 
   show('progressCard');
@@ -992,20 +1043,15 @@ async function resumeExtraction() {
   startTimer();
 
   try {
-    // 检查是否有未转录的视频需要刷新URL
     const todo = STATE.videos.filter(v => !v.transcript && (v.video_download_url || v.audio_url));
     if (todo.length > 0 && STATE.secUid) {
       addTitle(`${todo.length} 个视频待转录，正在刷新下载链接...`, 'active');
       setStatus('重新扫描获取最新下载链接...', 'info');
-      // 重新扫描获取新URL（音频URL会过期）
       const kw = $('keyword').value.trim();
       const freshVideos = await _fetchFreshUrls(STATE.secUid, kw);
       if (freshVideos.length > 0) {
-        // 用新URL更新未转录视频
         const urlMap = {};
-        for (const fv of freshVideos) {
-          urlMap[fv.id] = fv;
-        }
+        for (const fv of freshVideos) { urlMap[fv.id] = fv; }
         let refreshed = 0;
         for (const v of STATE.videos) {
           if (!v.transcript && urlMap[v.id]) {
@@ -1015,7 +1061,6 @@ async function resumeExtraction() {
           }
         }
         addTitle(`已刷新 ${refreshed} 个视频的下载链接`, 'success');
-        // 更新缓存
         saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, kw);
       }
     }
@@ -1029,7 +1074,6 @@ async function resumeExtraction() {
   }
 }
 
-// 重新扫描获取最新视频URL
 async function _fetchFreshUrls(secUid, keyword) {
   return new Promise((resolve) => {
     const allVideos = [];
@@ -1042,7 +1086,6 @@ async function _fetchFreshUrls(secUid, keyword) {
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
-      let currentEvent = '';
       function pump() {
         reader.read().then(({ done, value }) => {
           if (done) { resolve(allVideos); return; }
@@ -1071,12 +1114,10 @@ async function _fetchFreshUrls(secUid, keyword) {
   });
 }
 
-// 用户选择「重新搜索」
 async function freshExtraction() {
   hide('resumeBanner');
   show('startBtn');
   STATE._cachedData = null;
-  // 清除旧的视频列表缓存，强制完全重新扫描
   if (STATE.secUid) {
     const kw = $('keyword').value.trim();
     try { localStorage.removeItem(_cacheKey(STATE.secUid, kw)); } catch(e) {}
@@ -1084,7 +1125,6 @@ async function freshExtraction() {
   await doFullExtraction(STATE._cachedUrl || $('douyinUrl').value.trim());
 }
 
-// 完整流程：获取视频 → 转录
 async function doFullExtraction(url) {
   $('startBtn').disabled = true;
   $('startBtn').textContent = '处理中...';
@@ -1100,7 +1140,6 @@ async function doFullExtraction(url) {
   startTimer();
 
   try {
-    // 解析链接（如果还没解析过）
     if (!STATE.secUid) {
       setStatus('解析链接...', 'info');
       setProgress(3);
@@ -1109,7 +1148,6 @@ async function doFullExtraction(url) {
     }
     addTitle('链接解析成功', 'success');
 
-    // 流式获取视频列表
     setStatus('获取视频列表...', 'info');
     setProgress(8);
     await fetchVideosSSE(STATE.secUid, $('keyword').value.trim());
@@ -1121,7 +1159,6 @@ async function doFullExtraction(url) {
     if (STATE._stopReason) addTitle(`扫描结束原因：${STATE._stopReason}`, 'info');
     saveToHistory(url, $('keyword').value.trim(), STATE.creatorName);
 
-    // 缓存视频列表（含关键词）
     saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
 
     if (!STATE.videos.length) {
@@ -1132,10 +1169,7 @@ async function doFullExtraction(url) {
       return;
     }
 
-    // 恢复已有的转录缓存
     restoreTranscripts(STATE.videos);
-
-    // 转录
     await doTranscription();
 
   } catch (e) {
@@ -1147,7 +1181,6 @@ async function doFullExtraction(url) {
   }
 }
 
-// 转录阶段（独立函数，供断点续传复用）
 async function doTranscription() {
   const queue = STATE.videos.filter(v => v.video_download_url || v.audio_url);
   if (!queue.length) {
@@ -1158,8 +1191,6 @@ async function doTranscription() {
   }
 
   $('titleScroll').innerHTML = '';
-
-  // 统计已缓存 vs 待转录
   const cached = queue.filter(v => v.transcript).length;
   const todo = queue.filter(v => !v.transcript);
 
@@ -1173,7 +1204,6 @@ async function doTranscription() {
     setStatus(`全部完成 — ${cached} 个视频已转录`, 'success');
     stopTimer();
     showResults();
-    // 更新视频列表缓存（含关键词）
     saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
     return;
   }
@@ -1190,7 +1220,6 @@ async function doTranscription() {
     setStatus(`转录 ${num}/${queue.length}：${v.title.substring(0, 25)}...`, 'info');
     addTitle(`${num}. 转录中：${v.title.substring(0, 42)}`, 'active');
 
-    let success = false;
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
       try {
         const res = await api('transcribe', {
@@ -1203,7 +1232,6 @@ async function doTranscription() {
         saveTranscript(v.id, res.transcript);
         ok++;
         addTitle(`${num}. 完成：${v.title.substring(0, 42)}`, 'success');
-        success = true;
         break;
       } catch (e) {
         if (retry < MAX_RETRIES - 1) {
@@ -1218,7 +1246,6 @@ async function doTranscription() {
     }
   }
 
-  // 更新视频列表缓存（含转录状态和关键词）
   saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
 
   setProgress(100);
@@ -1255,9 +1282,7 @@ function showResults() {
   if (done > 0) {
     $('downloadBtn').classList.remove('hidden');
     show('chatCard');
-    // 更新聊天问候语
     $('chatGreeting').textContent = `你好！我是「${STATE.creatorName}」的 AI 分身，有什么想聊的？`;
-    // 保存/更新 AI 分身
     if (STATE.secUid && STATE.creatorName) {
       saveAvatar(STATE.secUid, STATE.creatorName, $('keyword').value.trim(), total, done);
     }
@@ -1340,7 +1365,6 @@ function toggleHistory() {
   }
 }
 
-// 页面加载时渲染历史
 renderHistory();
 
 // ─── AI 分身侧边栏 ───
@@ -1358,18 +1382,12 @@ function saveAvatar(secUid, creatorName, keyword, videoCount, transcribedCount) 
   const list = loadAvatars();
   const idx = list.findIndex(a => a.secUid === secUid && a.keyword === (keyword || ''));
   const entry = {
-    secUid,
-    creatorName,
+    secUid, creatorName,
     keyword: keyword || '',
-    videoCount,
-    transcribedCount,
+    videoCount, transcribedCount,
     savedAt: Date.now(),
   };
-  if (idx >= 0) {
-    list[idx] = entry;
-  } else {
-    list.unshift(entry);
-  }
+  if (idx >= 0) { list[idx] = entry; } else { list.unshift(entry); }
   saveAvatars(list);
   renderAvatars();
 }
@@ -1377,7 +1395,6 @@ function saveAvatar(secUid, creatorName, keyword, videoCount, transcribedCount) 
 function deleteAvatar(secUid, keyword) {
   const old = loadAvatars();
   const target = old.find(a => a.secUid === secUid && a.keyword === (keyword || ''));
-  // 清理语料库数据
   if (target && target.type === 'corpus') {
     try { localStorage.removeItem('dy-corpus-' + secUid); } catch(e) {}
   }
@@ -1390,20 +1407,23 @@ function renderAvatars() {
   const list = loadAvatars();
   const el = $('avatarList');
   if (!list.length) {
-    el.innerHTML = '<div class="sidebar-empty">完成博主视频转录后<br>分身将出现在这里</div>';
+    el.innerHTML = `<div class="sidebar-empty">
+      <div class="sidebar-empty-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.118a7.5 7.5 0 0115 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.5-1.632z"/></svg>
+      </div>
+      <div class="sidebar-empty-text">提取视频文字稿或上传文档<br>即可创建 AI 分身</div>
+    </div>`;
     return;
   }
   el.innerHTML = '';
   list.forEach(a => {
     const div = document.createElement('div');
     div.className = 'avatar-item';
-    // 高亮当前活跃的分身
     const isActive = a.type === 'corpus'
       ? STATE.secUid === a.secUid
       : STATE.secUid === a.secUid && ($('keyword').value.trim() || '') === a.keyword;
-    if (isActive) {
-      div.classList.add('active');
-    }
+    if (isActive) div.classList.add('active');
+
     const initial = (a.creatorName || '?')[0];
     let metaText = '';
     if (a.type === 'corpus') {
@@ -1412,11 +1432,9 @@ function renderAvatars() {
       const kwTag = a.keyword ? ` · ${a.keyword}` : '';
       metaText = `${a.transcribedCount}/${a.videoCount} 已转录${kwTag}`;
     }
-    const iconBg = a.type === 'corpus'
-      ? 'background: linear-gradient(135deg, #34c759, #30d158);'
-      : 'background: linear-gradient(135deg, var(--accent), #5856d6);';
+    const iconClass = a.type === 'corpus' ? 'corpus-type' : 'video-type';
     div.innerHTML = `
-      <div class="avatar-icon" style="${iconBg}">${esc(initial)}</div>
+      <div class="avatar-icon ${iconClass}">${esc(initial)}</div>
       <div class="avatar-info">
         <div class="avatar-name">${esc(a.creatorName || '未知')}</div>
         <div class="avatar-meta">${esc(metaText)}</div>
@@ -1429,13 +1447,11 @@ function renderAvatars() {
 }
 
 function switchAvatar(avatar) {
-  // 语料库类型分身
   if (avatar.type === 'corpus') {
     switchCorpusAvatar(avatar.secUid);
     return;
   }
 
-  // 博主视频类型分身
   const cached = loadVideoList(avatar.secUid, avatar.keyword);
   if (!cached) {
     alert('该分身的数据已过期，请重新提取');
@@ -1451,25 +1467,17 @@ function switchAvatar(avatar) {
   STATE.creatorName = cached.creatorName || avatar.creatorName;
   $('keyword').value = avatar.keyword || '';
 
-  // 恢复转录
   restoreTranscripts(STATE.videos);
 
-  // 重置聊天
   chatHistory = [];
   $('chatBox').innerHTML = `<div class="chat-bubble bot">你好！我是「${esc(STATE.creatorName)}」的 AI 分身，有什么想聊的？</div>`;
 
-  // 显示结果和聊天
   showResults();
   show('chatCard');
-
-  // 隐藏进度
   hide('progressCard');
-
-  // 更新侧边栏高亮
   renderAvatars();
 }
 
-// 页面加载时渲染分身列表
 renderAvatars();
 
 // ─── 上传语料创建分身 ───
@@ -1508,13 +1516,10 @@ async function createCorpusAvatar() {
 
     const instructions = $('corpusInstructions').value.trim();
 
-    // 保存到 localStorage
     const corpusId = 'corpus-' + Date.now();
     const corpusData = {
-      id: corpusId,
-      type: 'corpus',
-      avatarName: name,
-      text: data.text,
+      id: corpusId, type: 'corpus',
+      avatarName: name, text: data.text,
       charCount: data.char_count,
       instructions: instructions,
       filename: _selectedFile.name,
@@ -1522,35 +1527,25 @@ async function createCorpusAvatar() {
     };
     localStorage.setItem('dy-corpus-' + corpusId, JSON.stringify(corpusData));
 
-    // 保存分身索引
     const avatars = loadAvatars();
     avatars.unshift({
-      secUid: corpusId,
-      creatorName: name,
-      keyword: '',
-      videoCount: 0,
-      transcribedCount: 0,
-      type: 'corpus',
-      charCount: data.char_count,
-      filename: _selectedFile.name,
-      instructions: instructions,
+      secUid: corpusId, creatorName: name,
+      keyword: '', videoCount: 0, transcribedCount: 0,
+      type: 'corpus', charCount: data.char_count,
+      filename: _selectedFile.name, instructions: instructions,
       savedAt: Date.now(),
     });
     saveAvatars(avatars);
     renderAvatars();
 
-    // 立即切换到该分身的聊天
     switchCorpusAvatar(corpusId);
 
-    // 清空表单
     $('corpusName').value = '';
     $('corpusInstructions').value = '';
     $('corpusFile').value = '';
     _selectedFile = null;
     $('uploadArea').classList.remove('has-file');
     $('uploadFilename').classList.add('hidden');
-
-    alert('分身「' + name + '」创建成功！');
   } catch (e) {
     alert('创建失败：' + e.message);
   } finally {
@@ -1567,7 +1562,6 @@ function switchCorpusAvatar(corpusId) {
   }
   const corpus = JSON.parse(raw);
 
-  // 设置状态
   STATE._corpusMode = true;
   STATE._corpusText = corpus.text;
   STATE._corpusInstructions = corpus.instructions || '';
@@ -1575,15 +1569,12 @@ function switchCorpusAvatar(corpusId) {
   STATE.secUid = corpusId;
   STATE.videos = [];
 
-  // 重置聊天
   chatHistory = [];
   $('chatBox').innerHTML = `<div class="chat-bubble bot">你好！我是「${esc(corpus.avatarName)}」，基于「${esc(corpus.filename)}」创建。有什么想问的？</div>`;
 
-  // 显示聊天，隐藏其他
   show('chatCard');
   hide('progressCard');
   hide('resultCard');
-
   renderAvatars();
 }
 
