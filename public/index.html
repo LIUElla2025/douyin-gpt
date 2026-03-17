@@ -896,7 +896,7 @@ async function doTranscription() {
     let success = false;
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
       try {
-        const res = await api('transcribe', { video_download_url: v.video_download_url, audio_url: v.audio_url, video_url: v.url });
+        const res = await api('transcribe', { video_download_url: v.video_download_url, audio_url: v.audio_url, video_url: v.url, video_id: v.id });
         v.transcript = res.transcript;
         saveTranscript(v.id, res.transcript);
         ok++;

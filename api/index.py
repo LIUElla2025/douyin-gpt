@@ -306,6 +306,7 @@ def transcribe():
     audio_url = data.get("audio_url", "").strip()
     video_download_url = data.get("video_download_url", "").strip()
     video_url = data.get("video_url", "").strip()
+    video_id = data.get("video_id", "").strip()
     openai_key = cfg["openai_api_key"]
     proxy = cfg["proxy"]
     cookie = cfg["cookie"]
@@ -322,21 +323,43 @@ def transcribe():
     tmp_files = []
 
     try:
-        # --- 第1步：下载 ---
+        # --- 第1步：下载（遇403自动刷新URL）---
         suffix = ".mp3" if audio_url else ".mp4"
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         tmp_path = tmp.name
         tmp.close()
         tmp_files.append(tmp_path)
 
-        _download_url(download_url, tmp_path, cookie, proxy)
+        try:
+            _download_url(download_url, tmp_path, cookie, proxy)
+        except RuntimeError as dl_err:
+            if "403" in str(dl_err) and cookie:
+                # URL 过期，尝试通过抖音 API 获取最新 URL
+                aweme_id = video_id or _extract_aweme_id(video_url)
+                if aweme_id:
+                    fresh = _refresh_video_urls(aweme_id, cookie)
+                    if fresh:
+                        audio_url = fresh.get("audio_url", "") or audio_url
+                        video_download_url = fresh.get("video_download_url", "") or video_download_url
+                        download_url = audio_url or video_download_url
+                        suffix = ".mp3" if audio_url else ".mp4"
+                        new_tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+                        tmp_path = new_tmp.name
+                        new_tmp.close()
+                        tmp_files.append(tmp_path)
+                        _download_url(download_url, tmp_path, cookie, proxy)
+                    else:
+                        raise
+                else:
+                    raise
+            else:
+                raise
 
         file_size = os.path.getsize(tmp_path)
         if file_size < 1000:
             # 主URL失败，尝试备用URL
             fallback = video_download_url if download_url == audio_url else audio_url
             if fallback and fallback != download_url:
-                # 备用URL可能格式不同，需要用新的临时文件
                 new_suffix = ".mp4" if fallback == video_download_url else ".mp3"
                 new_tmp = tempfile.NamedTemporaryFile(suffix=new_suffix, delete=False)
                 new_tmp_path = new_tmp.name
@@ -345,12 +368,11 @@ def transcribe():
                 _download_url(fallback, new_tmp_path, cookie, proxy)
                 file_size = os.path.getsize(new_tmp_path)
                 if file_size >= 1000:
-                    tmp_path = new_tmp_path  # 切换到备用文件
+                    tmp_path = new_tmp_path
             if file_size < 1000:
                 return jsonify({"error": f"音频文件太小({file_size}字节)"}), 400
 
         if file_size > 25 * 1024 * 1024:
-            # 超过25MB，尝试用更小的音频URL
             if download_url != audio_url and audio_url:
                 new_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
                 new_tmp_path = new_tmp.name
@@ -359,7 +381,7 @@ def transcribe():
                 _download_url(audio_url, new_tmp_path, cookie, proxy)
                 file_size = os.path.getsize(new_tmp_path)
                 if file_size <= 25 * 1024 * 1024:
-                    tmp_path = new_tmp_path  # 切换到音频文件
+                    tmp_path = new_tmp_path
             if file_size > 25 * 1024 * 1024:
                 return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
 
@@ -404,6 +426,75 @@ def transcribe():
                     os.unlink(f)
             except Exception:
                 pass
+
+
+def _extract_aweme_id(video_url: str) -> str:
+    """从抖音视频URL中提取 aweme_id"""
+    if not video_url:
+        return ""
+    m = re.search(r'/video/(\d+)', video_url)
+    return m.group(1) if m else ""
+
+
+def _refresh_video_urls(aweme_id: str, cookie: str) -> dict:
+    """通过抖音 API 获取视频最新的音频/视频下载 URL"""
+    try:
+        import httpx
+
+        params = {
+            "device_platform": "webapp",
+            "aid": "6383",
+            "channel": "channel_pc_web",
+            "aweme_id": aweme_id,
+            "pc_client_type": "1",
+            "version_code": "290100",
+            "version_name": "29.1.0",
+            "cookie_enabled": "true",
+            "platform": "PC",
+            "msToken": _gen_mstoken(),
+        }
+        param_str = "&".join(f"{k}={v}" for k, v in params.items())
+        xb = _XBogus(_DY_UA)
+        signed_url = xb.get_xbogus(param_str)
+        full_url = f"https://www.douyin.com/aweme/v1/web/aweme/detail/?{signed_url}"
+
+        headers = {
+            "User-Agent": _DY_UA,
+            "Referer": "https://www.douyin.com/",
+            "Cookie": cookie,
+            "Accept": "application/json, text/plain, */*",
+        }
+
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            resp = client.get(full_url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+
+        item = data.get("aweme_detail", {})
+        if not item:
+            return {}
+
+        # 提取音频URL
+        music = item.get("music", {})
+        play_url_list = (music.get("play_url") or {}).get("url_list", [])
+        audio_url = play_url_list[0] if play_url_list else ""
+
+        # 提取视频下载URL
+        video_obj = item.get("video", {})
+        video_download_url = ""
+        download_addr = video_obj.get("download_addr", {})
+        da_list = download_addr.get("url_list", [])
+        if da_list:
+            video_download_url = da_list[0]
+        if not video_download_url:
+            play_addr = video_obj.get("play_addr", {})
+            pa_list = play_addr.get("url_list", [])
+            if pa_list:
+                video_download_url = pa_list[0]
+
+        return {"audio_url": audio_url, "video_download_url": video_download_url}
+    except Exception:
+        return {}
 
 
 def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = ""):
