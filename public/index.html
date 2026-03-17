@@ -857,6 +857,11 @@ async function freshExtraction() {
   hide('resumeBanner');
   show('startBtn');
   STATE._cachedData = null;
+  // 清除旧的视频列表缓存，强制完全重新扫描
+  if (STATE.secUid) {
+    const kw = $('keyword').value.trim();
+    try { localStorage.removeItem(_cacheKey(STATE.secUid, kw)); } catch(e) {}
+  }
   await doFullExtraction(STATE._cachedUrl || $('douyinUrl').value.trim());
 }
 
@@ -958,8 +963,9 @@ async function doTranscription() {
     const v = todo[i];
     const pct = 20 + ((cached + i) / queue.length) * 70;
     setProgress(pct);
-    setStatus(`转录 ${cached + i + 1}/${queue.length}：${v.title.substring(0, 25)}...`, 'info');
-    addTitle(`转录中：${v.title.substring(0, 45)}`, 'active');
+    const num = cached + i + 1;
+    setStatus(`转录 ${num}/${queue.length}：${v.title.substring(0, 25)}...`, 'info');
+    addTitle(`${num}. 转录中：${v.title.substring(0, 42)}`, 'active');
 
     let success = false;
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
@@ -973,17 +979,17 @@ async function doTranscription() {
         v.transcript = res.transcript;
         saveTranscript(v.id, res.transcript);
         ok++;
-        addTitle(`完成：${v.title.substring(0, 45)}`, 'success');
+        addTitle(`${num}. 完成：${v.title.substring(0, 42)}`, 'success');
         success = true;
         break;
       } catch (e) {
         if (retry < MAX_RETRIES - 1) {
-          addTitle(`重试(${retry + 1}/${MAX_RETRIES})：${v.title.substring(0, 35)} - ${e.message}`, 'info');
+          addTitle(`${num}. 重试(${retry + 1}/${MAX_RETRIES})：${v.title.substring(0, 30)} - ${e.message}`, 'info');
           await new Promise(r => setTimeout(r, 2000 * (retry + 1)));
         } else {
           fail++;
           v.transcript = null;
-          addTitle(`失败：${v.title.substring(0, 40)} - ${e.message}`, 'error');
+          addTitle(`${num}. 失败：${v.title.substring(0, 35)} - ${e.message}`, 'error');
         }
       }
     }
