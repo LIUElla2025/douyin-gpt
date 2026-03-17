@@ -1393,7 +1393,7 @@ async function downloadDoc() {
       if (!t) return false;
       const text = typeof t === 'string' ? t : (t.text || '');
       if (!text || text.length < 20) return false;
-      const puncts = [...text].filter(c => '，。！？、；：""''（）…—'.includes(c)).length;
+      const puncts = [...text].filter(c => "，。！？、；：\u201c\u201d\u2018\u2019（）…—".includes(c)).length;
       return puncts / text.length < 0.01;
     });
 
