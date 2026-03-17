@@ -150,7 +150,7 @@ def fetch_videos():
             all_videos = []
             total_scanned = prev_scanned
             max_cursor = start_cursor
-            max_count = max_videos if max_videos > 0 else 9999
+            max_count = len(target_ids) if target_ids else (max_videos if max_videos > 0 else 9999)
             page = start_page
             total_pages = max(1, -(-total_videos // 35))  # ceil division
             fetch_start = time.time()
@@ -233,7 +233,11 @@ def fetch_videos():
                         "creator_name": creator_name,
                     }
 
-                    if keywords:
+                    if target_ids:
+                        # target_ids 模式：只匹配目标 ID，跳过关键词过滤
+                        if video["id"] in target_ids:
+                            page_videos.append(video)
+                    elif keywords:
                         if _match_keyword(video, keywords):
                             page_videos.append(video)
                     else:
