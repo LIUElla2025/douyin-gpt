@@ -1142,6 +1142,7 @@ async function resumeExtraction() {
       let refreshed = 0;
       for (const v of STATE.videos) {
         if (!v.transcript && urlMap[v.id]) {
+          v.dash_audio_url = urlMap[v.id].dash_audio_url || v.dash_audio_url || '';
           v.audio_url = urlMap[v.id].audio_url || v.audio_url;
           v.video_download_url = urlMap[v.id].video_download_url || v.video_download_url;
           refreshed++;
@@ -1318,10 +1319,10 @@ async function doTranscription() {
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
       try {
         const res = await api('transcribe', {
+          dash_audio_url: v.dash_audio_url || '',
           audio_url: v.audio_url,
           video_download_url: v.video_download_url,
           video_url: v.url,
-          video_id: v.id,
         });
         v.transcript = res.transcript;
         saveTranscript(v.id, res.transcript);
