@@ -5,7 +5,8 @@ Flask 应用，提供以下 API：
 - POST /api/fetch-videos   获取博主视频列表
 - POST /api/transcribe     转录单个视频音频
 - POST /api/generate-doc   生成 Word 文档
-- POST /api/chat           博主 GPT 对话
+- POST /api/upload-corpus  上传文档创建语料库
+- POST /api/chat           博主 GPT 对话 / 语料库对话
 """
 
 import base64
@@ -585,6 +586,88 @@ def debug_video_fields():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/upload-corpus", methods=["POST"])
+def upload_corpus():
+    """上传文档文件，解析文本内容作为语料库"""
+    if "file" not in request.files:
+        return jsonify({"error": "未选择文件"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "文件名为空"}), 400
+
+    avatar_name = request.form.get("avatar_name", "").strip()
+    if not avatar_name:
+        return jsonify({"error": "请输入分身名称"}), 400
+
+    filename = file.filename.lower()
+    try:
+        if filename.endswith(".docx"):
+            text = _parse_docx(file)
+        elif filename.endswith(".txt") or filename.endswith(".md"):
+            text = file.read().decode("utf-8", errors="ignore")
+        elif filename.endswith(".pdf"):
+            text = _parse_pdf(file)
+        elif filename.endswith(".doc"):
+            return jsonify({"error": "不支持 .doc 格式，请转为 .docx 后上传"}), 400
+        else:
+            # 尝试当纯文本读
+            text = file.read().decode("utf-8", errors="ignore")
+
+        text = text.strip()
+        if not text:
+            return jsonify({"error": "文件内容为空"}), 400
+
+        return jsonify({
+            "text": text,
+            "char_count": len(text),
+            "avatar_name": avatar_name,
+        })
+    except Exception as e:
+        return jsonify({"error": f"文件解析失败: {e}"}), 500
+
+
+def _parse_docx(file_obj) -> str:
+    """解析 .docx 文件提取纯文本"""
+    from docx import Document
+    doc = Document(file_obj)
+    parts = []
+    for para in doc.paragraphs:
+        t = para.text.strip()
+        if t:
+            parts.append(t)
+    return "\n\n".join(parts)
+
+
+def _parse_pdf(file_obj) -> str:
+    """简易 PDF 文本提取（纯文本层）"""
+    content = file_obj.read()
+    # 提取 PDF 文本流中的文本（简易方案，不依赖额外库）
+    text_parts = []
+    # 查找 BT...ET 文本块中的 Tj/TJ 操作符
+    for match in re.finditer(rb"\(([^)]*)\)\s*Tj", content):
+        try:
+            raw = match.group(1)
+            # 处理 PDF 转义
+            raw = raw.replace(b"\\(", b"(").replace(b"\\)", b")").replace(b"\\\\", b"\\")
+            text_parts.append(raw.decode("utf-8", errors="ignore"))
+        except Exception:
+            pass
+    if text_parts:
+        return "\n".join(text_parts)
+    # 如果上面没提取到，尝试暴力提取可读文本
+    try:
+        decoded = content.decode("utf-8", errors="ignore")
+        # 过滤掉二进制垃圾，只保留中英文和标点
+        clean = re.sub(r"[^\u4e00-\u9fff\u3000-\u303fa-zA-Z0-9\s.,;:!?，。；：！？、""''（）\-\n]", "", decoded)
+        lines = [l.strip() for l in clean.split("\n") if len(l.strip()) > 5]
+        if lines:
+            return "\n".join(lines)
+    except Exception:
+        pass
+    return ""
+
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     data = request.json or {}
@@ -592,6 +675,8 @@ def chat():
     message = data.get("message", "").strip()
     creator_name = data.get("creator_name", "博主")
     videos_context = data.get("videos_context", [])
+    corpus_text = data.get("corpus_text", "").strip()
+    corpus_instructions = data.get("corpus_instructions", "").strip()
     history = data.get("history", [])
     openai_key = cfg["openai_api_key"]
     proxy = cfg["proxy"]
@@ -602,9 +687,17 @@ def chat():
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
     try:
-        reply = _chat_with_creator(
-            message, creator_name, videos_context, history, openai_key, proxy
-        )
+        if corpus_text:
+            # 上传语料模式
+            reply = _chat_with_corpus(
+                message, creator_name, corpus_text, corpus_instructions,
+                history, openai_key, proxy
+            )
+        else:
+            # 博主视频模式
+            reply = _chat_with_creator(
+                message, creator_name, videos_context, history, openai_key, proxy
+            )
         return jsonify({"response": reply})
     except Exception as e:
         return jsonify({"error": f"对话失败: {e}"}), 500
@@ -1608,6 +1701,94 @@ def _chat_with_creator(
     messages.append({"role": "user", "content": message})
 
     # 直接 HTTP 调用 OpenAI Chat API（不依赖 httpx）
+    import ssl
+    payload = json.dumps({
+        "model": "gpt-4.1",
+        "max_tokens": 2048,
+        "messages": messages,
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=payload,
+        method="POST",
+    )
+    req.add_header("Authorization", f"Bearer {api_key.strip()}")
+    req.add_header("Content-Type", "application/json")
+
+    ctx = ssl.create_default_context()
+    resp = urllib.request.urlopen(req, timeout=120, context=ctx)
+    result = json.loads(resp.read().decode())
+
+    choices = result.get("choices", [])
+    if not choices:
+        return "对话出错: 空响应"
+
+    return choices[0].get("message", {}).get("content", "")
+
+
+def _chat_with_corpus(
+    message: str,
+    avatar_name: str,
+    corpus_text: str,
+    corpus_instructions: str,
+    history: list[dict],
+    api_key: str,
+    proxy: str = "",
+) -> str:
+    """基于上传语料的 GPT 对话"""
+
+    # 搜索相关段落
+    query_words = set()
+    phrases = re.split(r"[，。？！、；：\s,.\?!;:\n]+", message)
+    for p in phrases:
+        p = p.strip()
+        if 2 <= len(p) <= 6:
+            query_words.add(p)
+        for n in (2, 3):
+            for i in range(len(p) - n + 1):
+                query_words.add(p[i : i + n])
+
+    # 按段落切分语料，找最相关的段落
+    paragraphs = [p.strip() for p in corpus_text.split("\n\n") if p.strip()]
+    if not paragraphs:
+        paragraphs = [p.strip() for p in corpus_text.split("\n") if p.strip()]
+
+    context_parts = []
+    if query_words and paragraphs:
+        scored = []
+        for para in paragraphs:
+            score = sum(1 for w in query_words if w in para)
+            if score > 0:
+                scored.append((score, para[:3000]))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        for _, text in scored[:8]:
+            context_parts.append(text)
+
+    context = "\n\n---\n\n".join(context_parts) if context_parts else "（无特别相关段落）"
+
+    instructions_block = ""
+    if corpus_instructions:
+        instructions_block = f"\n\n## 用户自定义要求\n{corpus_instructions}"
+
+    system_prompt = f"""你是「{avatar_name}」，一个基于以下语料库内容的 AI 助手。根据语料库中的知识来回答问题。
+
+## 语料库内容
+{corpus_text[:120000]}
+
+## 当前对话相关段落
+{context[:30000]}
+{instructions_block}
+
+## 规则
+1. 优先基于语料库中的内容回答
+2. 如果语料库中没有相关信息，如实说明
+3. 自然、专业地回答"""
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(history[-20:])
+    messages.append({"role": "user", "content": message})
+
     import ssl
     payload = json.dumps({
         "model": "gpt-4.1",

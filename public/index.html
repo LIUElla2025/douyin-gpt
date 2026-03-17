@@ -407,7 +407,41 @@
     width: auto;
     padding: 14px 28px;
     border-radius: 980px;
-    font-size: 15px;
+  }
+
+  /* ─── Upload Corpus ─── */
+  .upload-area {
+    border: 2px dashed rgba(0,0,0,0.12);
+    border-radius: var(--radius-sm);
+    padding: 28px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #fafafa;
+    margin-bottom: 16px;
+  }
+  .upload-area:hover { border-color: var(--accent); background: rgba(0,113,227,0.03); }
+  .upload-area.has-file { border-color: var(--green); background: rgba(52,199,89,0.05); }
+  .upload-area input[type="file"] { display: none; }
+  .upload-icon { font-size: 28px; margin-bottom: 8px; }
+  .upload-text { font-size: 14px; color: var(--text-secondary); }
+  .upload-filename { font-size: 14px; color: var(--text); font-weight: 500; margin-top: 6px; }
+  .section-divider {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: 32px 0 24px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .section-divider::before, .section-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
   }
 
   /* ─── History ─── */
@@ -582,6 +616,28 @@
       <input type="text" id="chatInput" placeholder="输入你的问题..." onkeypress="if(event.key==='Enter')sendChat()">
       <button class="btn btn-primary" onclick="sendChat()">发送</button>
     </div>
+  </div>
+
+  <!-- 上传语料创建分身 -->
+  <div class="section-divider">或者上传文档创建分身</div>
+  <div class="card" id="uploadCard">
+    <div class="form-group">
+      <label>分身名称</label>
+      <input type="text" id="corpusName" placeholder="给这个 AI 分身起个名字">
+    </div>
+    <div class="upload-area" id="uploadArea" onclick="if(event.target===this||!event.target.closest('input'))$('corpusFile').click()">
+      <input type="file" id="corpusFile" accept=".docx,.txt,.md,.pdf" onchange="onFileSelected(this)" onclick="event.stopPropagation()">
+      <div class="upload-icon">+</div>
+      <div class="upload-text">点击上传文档（支持 .docx .txt .md .pdf）</div>
+      <div class="upload-filename hidden" id="uploadFilename"></div>
+    </div>
+    <div class="form-group">
+      <label>特殊要求（可选）</label>
+      <input type="text" id="corpusInstructions" placeholder="例如：只用第三章的内容 / 用专业术语回答 / 模仿作者口吻">
+    </div>
+    <button class="btn btn-primary" id="uploadBtn" onclick="createCorpusAvatar()">
+      创建分身
+    </button>
   </div>
 
 </div>
@@ -883,6 +939,9 @@ async function resumeExtraction() {
   const cached = STATE._cachedData;
   STATE.videos = cached.videos;
   STATE.creatorName = cached.creatorName;
+  STATE._corpusMode = false;
+  STATE._corpusText = '';
+  STATE._corpusInstructions = '';
 
   // 恢复转录缓存
   restoreTranscripts(STATE.videos);
@@ -999,6 +1058,9 @@ async function doFullExtraction(url) {
   $('titleScroll').innerHTML = '';
   $('titleScroll').classList.add('hidden');
   chatHistory = [];
+  STATE._corpusMode = false;
+  STATE._corpusText = '';
+  STATE._corpusInstructions = '';
   startTimer();
 
   try {
@@ -1277,7 +1339,13 @@ function saveAvatar(secUid, creatorName, keyword, videoCount, transcribedCount) 
 }
 
 function deleteAvatar(secUid, keyword) {
-  const list = loadAvatars().filter(a => !(a.secUid === secUid && a.keyword === (keyword || '')));
+  const old = loadAvatars();
+  const target = old.find(a => a.secUid === secUid && a.keyword === (keyword || ''));
+  // 清理语料库数据
+  if (target && target.type === 'corpus') {
+    try { localStorage.removeItem('dy-corpus-' + secUid); } catch(e) {}
+  }
+  const list = old.filter(a => !(a.secUid === secUid && a.keyword === (keyword || '')));
   saveAvatars(list);
   renderAvatars();
 }
@@ -1294,16 +1362,28 @@ function renderAvatars() {
     const div = document.createElement('div');
     div.className = 'avatar-item';
     // 高亮当前活跃的分身
-    if (STATE.secUid === a.secUid && ($('keyword').value.trim() || '') === a.keyword) {
+    const isActive = a.type === 'corpus'
+      ? STATE.secUid === a.secUid
+      : STATE.secUid === a.secUid && ($('keyword').value.trim() || '') === a.keyword;
+    if (isActive) {
       div.classList.add('active');
     }
     const initial = (a.creatorName || '?')[0];
-    const kwTag = a.keyword ? ` · ${a.keyword}` : '';
+    let metaText = '';
+    if (a.type === 'corpus') {
+      metaText = `${((a.charCount || 0) / 1000).toFixed(0)}K 字 · ${a.filename || '文档'}`;
+    } else {
+      const kwTag = a.keyword ? ` · ${a.keyword}` : '';
+      metaText = `${a.transcribedCount}/${a.videoCount} 已转录${kwTag}`;
+    }
+    const iconBg = a.type === 'corpus'
+      ? 'background: linear-gradient(135deg, #34c759, #30d158);'
+      : 'background: linear-gradient(135deg, var(--accent), #5856d6);';
     div.innerHTML = `
-      <div class="avatar-icon">${esc(initial)}</div>
+      <div class="avatar-icon" style="${iconBg}">${esc(initial)}</div>
       <div class="avatar-info">
-        <div class="avatar-name">${esc(a.creatorName || '未知博主')}</div>
-        <div class="avatar-meta">${a.transcribedCount}/${a.videoCount} 已转录${esc(kwTag)}</div>
+        <div class="avatar-name">${esc(a.creatorName || '未知')}</div>
+        <div class="avatar-meta">${esc(metaText)}</div>
       </div>
       <button class="avatar-delete" title="删除" onclick="event.stopPropagation();deleteAvatar('${a.secUid}','${a.keyword}')">×</button>
     `;
@@ -1313,7 +1393,13 @@ function renderAvatars() {
 }
 
 function switchAvatar(avatar) {
-  // 加载该分身的缓存数据
+  // 语料库类型分身
+  if (avatar.type === 'corpus') {
+    switchCorpusAvatar(avatar.secUid);
+    return;
+  }
+
+  // 博主视频类型分身
   const cached = loadVideoList(avatar.secUid, avatar.keyword);
   if (!cached) {
     alert('该分身的数据已过期，请重新提取');
@@ -1321,6 +1407,9 @@ function switchAvatar(avatar) {
     return;
   }
 
+  STATE._corpusMode = false;
+  STATE._corpusText = '';
+  STATE._corpusInstructions = '';
   STATE.secUid = avatar.secUid;
   STATE.videos = cached.videos;
   STATE.creatorName = cached.creatorName || avatar.creatorName;
@@ -1347,6 +1436,121 @@ function switchAvatar(avatar) {
 // 页面加载时渲染分身列表
 renderAvatars();
 
+// ─── 上传语料创建分身 ───
+let _selectedFile = null;
+
+function onFileSelected(input) {
+  const file = input.files[0];
+  if (!file) return;
+  _selectedFile = file;
+  $('uploadArea').classList.add('has-file');
+  const fname = $('uploadFilename');
+  fname.textContent = file.name + ' (' + (file.size / 1024).toFixed(0) + 'KB)';
+  fname.classList.remove('hidden');
+}
+
+async function createCorpusAvatar() {
+  const name = $('corpusName').value.trim();
+  if (!name) { alert('请输入分身名称'); return; }
+  if (!_selectedFile) { alert('请选择文档文件'); return; }
+
+  const btn = $('uploadBtn');
+  btn.disabled = true;
+  btn.textContent = '解析中...';
+
+  try {
+    const formData = new FormData();
+    formData.append('file', _selectedFile);
+    formData.append('avatar_name', name);
+
+    const resp = await fetch('/api/upload-corpus', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Upload failed');
+
+    const instructions = $('corpusInstructions').value.trim();
+
+    // 保存到 localStorage
+    const corpusId = 'corpus-' + Date.now();
+    const corpusData = {
+      id: corpusId,
+      type: 'corpus',
+      avatarName: name,
+      text: data.text,
+      charCount: data.char_count,
+      instructions: instructions,
+      filename: _selectedFile.name,
+      savedAt: Date.now(),
+    };
+    localStorage.setItem('dy-corpus-' + corpusId, JSON.stringify(corpusData));
+
+    // 保存分身索引
+    const avatars = loadAvatars();
+    avatars.unshift({
+      secUid: corpusId,
+      creatorName: name,
+      keyword: '',
+      videoCount: 0,
+      transcribedCount: 0,
+      type: 'corpus',
+      charCount: data.char_count,
+      filename: _selectedFile.name,
+      instructions: instructions,
+      savedAt: Date.now(),
+    });
+    saveAvatars(avatars);
+    renderAvatars();
+
+    // 立即切换到该分身的聊天
+    switchCorpusAvatar(corpusId);
+
+    // 清空表单
+    $('corpusName').value = '';
+    $('corpusInstructions').value = '';
+    $('corpusFile').value = '';
+    _selectedFile = null;
+    $('uploadArea').classList.remove('has-file');
+    $('uploadFilename').classList.add('hidden');
+
+    alert('分身「' + name + '」创建成功！');
+  } catch (e) {
+    alert('创建失败：' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '创建分身';
+  }
+}
+
+function switchCorpusAvatar(corpusId) {
+  const raw = localStorage.getItem('dy-corpus-' + corpusId);
+  if (!raw) {
+    alert('语料数据已过期，请重新上传');
+    return;
+  }
+  const corpus = JSON.parse(raw);
+
+  // 设置状态
+  STATE._corpusMode = true;
+  STATE._corpusText = corpus.text;
+  STATE._corpusInstructions = corpus.instructions || '';
+  STATE.creatorName = corpus.avatarName;
+  STATE.secUid = corpusId;
+  STATE.videos = [];
+
+  // 重置聊天
+  chatHistory = [];
+  $('chatBox').innerHTML = `<div class="chat-bubble bot">你好！我是「${esc(corpus.avatarName)}」，基于「${esc(corpus.filename)}」创建。有什么想问的？</div>`;
+
+  // 显示聊天，隐藏其他
+  show('chatCard');
+  hide('progressCard');
+  hide('resultCard');
+
+  renderAvatars();
+}
+
 let chatHistory = [];
 async function sendChat() {
   const input = $('chatInput');
@@ -1367,12 +1571,18 @@ async function sendChat() {
   box.scrollTop = box.scrollHeight;
 
   try {
-    const res = await api('chat', {
+    const chatBody = {
       message: msg,
       creator_name: STATE.creatorName,
-      videos_context: STATE.videos,
       history: chatHistory,
-    });
+    };
+    if (STATE._corpusMode && STATE._corpusText) {
+      chatBody.corpus_text = STATE._corpusText;
+      chatBody.corpus_instructions = STATE._corpusInstructions || '';
+    } else {
+      chatBody.videos_context = STATE.videos;
+    }
+    const res = await api('chat', chatBody);
     chatHistory.push({ role: 'user', content: msg });
     chatHistory.push({ role: 'assistant', content: res.response });
     bot.textContent = res.response;
