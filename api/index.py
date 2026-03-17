@@ -376,6 +376,22 @@ def transcribe():
             except Exception as e:
                 print(f"[transcribe] 直接下载失败: {e}")
 
+        # --- 策略2b：ffmpeg 直接从视频 URL 提取音频（大文件方案） ---
+        # ffmpeg 通过 HTTP Range 请求读取 moov 原子，无需下载整个视频
+        # 需要 Vercel Pro（60s超时）
+        if vid_url and not whisper_file:
+            try:
+                mp3_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                mp3_path = mp3_tmp.name
+                mp3_tmp.close()
+                tmp_files.append(mp3_path)
+                _extract_audio_from_url(vid_url, mp3_path, cookie)
+                if os.path.getsize(mp3_path) >= 1000:
+                    whisper_file = mp3_path
+                    print(f"[transcribe] ffmpeg URL提取成功, 大小={os.path.getsize(mp3_path)}")
+            except Exception as e:
+                print(f"[transcribe] ffmpeg URL提取失败: {e}")
+
         # --- 策略3：背景音乐（降级方案，至少能转录出东西） ---
         if audio_url and not whisper_file:
             try:
