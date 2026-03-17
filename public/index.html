@@ -589,7 +589,8 @@ async function fetchVideosSSE(secUid, keyword) {
 
   while (true) {
     round++;
-    const result = await _fetchVideosOnce(secUid, keyword, resumeCursor, resumePage, totalScanned);
+    const prevMatched = STATE.videos.length;
+    const result = await _fetchVideosOnce(secUid, keyword, resumeCursor, resumePage, totalScanned, prevMatched);
 
     // 续传时视频已通过 SSE 'videos' 事件实时 push 到 STATE.videos，无需重复添加
 
@@ -612,7 +613,7 @@ async function fetchVideosSSE(secUid, keyword) {
   return { videos: STATE.videos, creator_name: STATE.creatorName };
 }
 
-function _fetchVideosOnce(secUid, keyword, startCursor, startPage, prevScanned) {
+function _fetchVideosOnce(secUid, keyword, startCursor, startPage, prevScanned, prevMatched) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       sec_uid: secUid,
@@ -621,6 +622,7 @@ function _fetchVideosOnce(secUid, keyword, startCursor, startPage, prevScanned) 
       start_cursor: startCursor,
       start_page: startPage,
       prev_scanned: prevScanned,
+      prev_matched: prevMatched || 0,
     });
 
     fetch('/api/fetch-videos', {

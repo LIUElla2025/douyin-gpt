@@ -116,6 +116,7 @@ def fetch_videos():
     start_cursor = data.get("start_cursor", 0)
     start_page = data.get("start_page", 0)
     prev_scanned = data.get("prev_scanned", 0)
+    prev_matched = data.get("prev_matched", 0)
 
     if not sec_uid:
         return jsonify({"error": "缺少 sec_uid"}), 400
@@ -160,8 +161,8 @@ def fetch_videos():
             while len(all_videos) < max_count:
                 page += 1
                 yield send_event("status", {
-                    "msg": f"正在扫描第 {page}/{total_pages} 页（已扫描 {total_scanned}，匹配 {len(all_videos)}）",
-                    "fetched": len(all_videos),
+                    "msg": f"正在扫描第 {page}/{total_pages} 页（已扫描 {total_scanned}，匹配 {prev_matched + len(all_videos)}）",
+                    "fetched": prev_matched + len(all_videos),
                     "total": total_videos,
                     "page": page,
                     "total_pages": total_pages,
@@ -241,7 +242,7 @@ def fetch_videos():
                 if page_videos:
                     yield send_event("videos", {
                         "videos": page_videos,
-                        "fetched": len(all_videos),
+                        "fetched": prev_matched + len(all_videos),
                         "total": total_videos,
                     })
 
