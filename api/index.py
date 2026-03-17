@@ -113,6 +113,8 @@ def fetch_videos():
     cookie = cfg["cookie"]
     keyword = data.get("keyword", "").strip()
     max_videos = data.get("max_videos", 0)
+    # 目标 ID 模式：只找这些视频，找齐就停
+    target_ids = set(data.get("target_ids", []))
     # 续传参数：从上次超时的位置继续扫描
     start_cursor = data.get("start_cursor", 0)
     start_page = data.get("start_page", 0)
@@ -246,6 +248,14 @@ def fetch_videos():
                         "fetched": prev_matched + len(all_videos),
                         "total": total_videos,
                     })
+
+                # target_ids 模式：找齐目标视频立即停止
+                if target_ids:
+                    found_ids = {v["id"] for v in all_videos}
+                    remaining = target_ids - found_ids
+                    if not remaining:
+                        stop_reason = f"已找到全部 {len(target_ids)} 个目标视频"
+                        break
 
                 if len(all_videos) >= max_count:
                     stop_reason = f"已达到最大数量限制({max_count})"
