@@ -524,30 +524,9 @@ def generate_doc():
     data = request.json or {}
     videos = data.get("videos", [])
     creator_name = data.get("creator_name", "博主")
-    cfg = _get_config(data)
-    openai_key = cfg["openai_api_key"]
 
     if not videos:
         return jsonify({"error": "没有视频数据"}), 400
-
-    # 兜底：检查每个视频的转录文本是否缺标点，缺则用 GPT 修复
-    if openai_key:
-        for v in videos:
-            t = v.get("transcript")
-            if not t:
-                continue
-            text = t.get("text", "") if isinstance(t, dict) else (t if isinstance(t, str) else "")
-            if text and not _has_punctuation(text):
-                try:
-                    polished = _polish_transcript(text, openai_key)
-                    if polished:
-                        if isinstance(t, dict):
-                            t["text"] = polished
-                            t["segments"] = []
-                        else:
-                            v["transcript"] = polished
-                except Exception:
-                    pass
 
     try:
         doc_bytes = _generate_word_doc(videos, creator_name)
