@@ -504,39 +504,35 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
     }
     if cookie:
         headers["Cookie"] = cookie
-
-    # 尝试策略：先 HTTP/2，遇到 StreamReset 降级 HTTP/1.1
-    strategies = [
-        {"http2": True, "http1": True},
-        {"http2": False, "http1": True},   # 降级 HTTP/1.1
-    ]
+    # 大文件用 Range 头限制下载量，避免下载过大视频
+    if max_bytes > 0:
+        headers["Range"] = f"bytes=0-{max_bytes - 1}"
 
     last_err = None
-    for strategy in strategies:
-        for attempt in range(2):
-            try:
-                with httpx.Client(
-                    timeout=45,
-                    follow_redirects=True,
-                    proxy=proxy if proxy else None,
-                    **strategy,
-                ) as client:
-                    with client.stream("GET", url, headers=headers) as resp:
+    for attempt in range(3):
+        use_h2 = attempt < 2  # 前2次用 HTTP/2，第3次降级 HTTP/1.1
+        try:
+            with httpx.Client(
+                timeout=90,
+                follow_redirects=True,
+                http2=use_h2,
+                proxy=proxy if proxy else None,
+            ) as client:
+                with client.stream("GET", url, headers=headers) as resp:
+                    # Range 请求返回 206 也算成功
+                    if resp.status_code not in (200, 206):
                         resp.raise_for_status()
-                        downloaded = 0
-                        with open(dest_path, "wb") as f:
-                            for chunk in resp.iter_bytes(8192):
-                                f.write(chunk)
-                                downloaded += len(chunk)
-                                if max_bytes > 0 and downloaded >= max_bytes:
-                                    break
-                return
-            except Exception as e:
-                last_err = e
-                err_str = str(e)
-                if "StreamReset" in err_str or "stream" in err_str.lower():
-                    break  # 跳到下一个 strategy（降级）
-                time.sleep(1)
+                    downloaded = 0
+                    with open(dest_path, "wb") as f:
+                        for chunk in resp.iter_bytes(8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if max_bytes > 0 and downloaded >= max_bytes:
+                                break
+            return
+        except Exception as e:
+            last_err = e
+            time.sleep(1 + attempt)
     raise RuntimeError(f"下载失败(重试3次): {last_err}")
 
 
