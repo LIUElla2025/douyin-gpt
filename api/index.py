@@ -384,7 +384,7 @@ def transcribe():
                 tmp_p = tmp.name
                 tmp.close()
                 tmp_files.append(tmp_p)
-                _download_url(audio_url, tmp_p, cookie, proxy, max_bytes=0)
+                _download_url(audio_url, tmp_p, cookie, proxy, max_bytes=8 * 1024 * 1024)
                 sz = os.path.getsize(tmp_p)
                 if sz >= 1000:
                     with open(tmp_p, "rb") as _af:
@@ -1585,7 +1585,7 @@ def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
 
     ctx = ssl.create_default_context()
     try:
-        resp = urllib.request.urlopen(req, timeout=45, context=ctx)
+        resp = urllib.request.urlopen(req, timeout=120, context=ctx)
     except urllib.error.HTTPError as http_err:
         # 读取错误响应体，获取具体原因
         err_body = ""
