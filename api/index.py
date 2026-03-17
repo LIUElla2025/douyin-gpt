@@ -1956,7 +1956,7 @@ def _chat_with_creator(
     import ssl
     payload = json.dumps({
         "model": "gpt-4.1",
-        "max_tokens": 2048,
+        "max_tokens": 16384,
         "messages": messages,
     }).encode()
 
@@ -2044,7 +2044,7 @@ def _chat_with_corpus(
     import ssl
     payload = json.dumps({
         "model": "gpt-4.1",
-        "max_tokens": 2048,
+        "max_tokens": 16384,
         "messages": messages,
     }).encode()
 
