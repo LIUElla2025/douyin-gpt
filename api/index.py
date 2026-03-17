@@ -1,4 +1,4 @@
-"""Vercel Serverless API — 抖音视频文字稿提取
+"""Vercel Serverless API — 稿了个 AI（视频文稿提取 & 知识分身）
 
 Flask 应用，提供以下 API：
 - POST /api/resolve-url    解析抖音链接 → sec_uid
@@ -384,8 +384,8 @@ def transcribe():
                 if polished:
                     transcript["text"] = polished
                     transcript["segments"] = []
-            except Exception:
-                pass
+            except Exception as polish_err:
+                print(f"[polish] GPT 加标点失败: {polish_err}")
 
         return jsonify({"transcript": transcript})
 
@@ -524,9 +524,30 @@ def generate_doc():
     data = request.json or {}
     videos = data.get("videos", [])
     creator_name = data.get("creator_name", "博主")
+    cfg = _get_config(data)
+    openai_key = cfg["openai_api_key"]
 
     if not videos:
         return jsonify({"error": "没有视频数据"}), 400
+
+    # 兜底：检查每个视频的转录文本是否缺标点，缺则用 GPT 修复
+    if openai_key:
+        for v in videos:
+            t = v.get("transcript")
+            if not t:
+                continue
+            text = t.get("text", "") if isinstance(t, dict) else (t if isinstance(t, str) else "")
+            if text and not _has_punctuation(text):
+                try:
+                    polished = _polish_transcript(text, openai_key)
+                    if polished:
+                        if isinstance(t, dict):
+                            t["text"] = polished
+                            t["segments"] = []
+                        else:
+                            v["transcript"] = polished
+                except Exception:
+                    pass
 
     try:
         doc_bytes = _generate_word_doc(videos, creator_name)
@@ -1266,45 +1287,74 @@ def _split_and_transcribe(file_path: str, api_key: str, proxy: str, tmp_files: l
     return "".join(all_text)
 
 
+def _has_punctuation(text: str) -> bool:
+    """检查中文文本是否包含足够标点"""
+    if not text or len(text) < 20:
+        return True
+    puncts = sum(1 for c in text if c in "，。！？、；：""''（）…—")
+    ratio = puncts / len(text)
+    return ratio > 0.01  # 至少 1% 的字符是标点
+
+
 def _polish_transcript(raw_text: str, api_key: str) -> str:
     """用 GPT 给转录文稿添加标点符号，整理为标准文稿"""
     import ssl
 
-    payload = json.dumps({
-        "model": "gpt-4.1-mini",
-        "max_tokens": 4096,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "你是一个中文文稿整理专家。请将以下语音转录文本整理为标准文稿：\n"
-                    "1. 添加正确的中文标点符号（句号、逗号、问号、感叹号、顿号等）\n"
-                    "2. 去除口水词（嗯、啊、呃、那个、就是说等）\n"
-                    "3. 不要改变原文的意思和用词\n"
-                    "4. 不要添加任何解释或注释\n"
-                    "5. 直接输出整理后的文稿，不要有任何前缀说明"
-                ),
-            },
-            {"role": "user", "content": raw_text},
-        ],
-    }).encode()
+    if not raw_text or len(raw_text.strip()) < 10:
+        return ""
 
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
-        data=payload,
-        method="POST",
-    )
-    req.add_header("Authorization", f"Bearer {api_key.strip()}")
-    req.add_header("Content-Type", "application/json")
+    # 长文本分块处理，每块不超过 2000 字
+    chunks = []
+    text = raw_text.strip()
+    while len(text) > 2000:
+        chunks.append(text[:2000])
+        text = text[2000:]
+    chunks.append(text)
 
-    ctx = ssl.create_default_context()
-    resp = urllib.request.urlopen(req, timeout=30, context=ctx)
-    result = json.loads(resp.read().decode())
+    polished_parts = []
+    for chunk in chunks:
+        payload = json.dumps({
+            "model": "gpt-4.1-mini",
+            "max_tokens": 8192,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是一个中文文稿整理专家。请将以下语音转录文本整理为标准文稿：\n"
+                        "1. 添加正确的中文标点符号（句号、逗号、问号、感叹号、顿号等）\n"
+                        "2. 去除口水词（嗯、啊、呃、那个、就是说等）\n"
+                        "3. 不要改变原文的意思和用词\n"
+                        "4. 不要添加任何解释或注释\n"
+                        "5. 直接输出整理后的文稿，不要有任何前缀说明"
+                    ),
+                },
+                {"role": "user", "content": chunk},
+            ],
+        }).encode()
 
-    choices = result.get("choices", [])
-    if choices:
-        return choices[0].get("message", {}).get("content", "").strip()
-    return ""
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=payload,
+            method="POST",
+        )
+        req.add_header("Authorization", f"Bearer {api_key.strip()}")
+        req.add_header("Content-Type", "application/json")
+
+        ctx = ssl.create_default_context()
+        resp = urllib.request.urlopen(req, timeout=60, context=ctx)
+        result = json.loads(resp.read().decode())
+
+        choices = result.get("choices", [])
+        if choices:
+            part = choices[0].get("message", {}).get("content", "").strip()
+            if part:
+                polished_parts.append(part)
+            else:
+                polished_parts.append(chunk)
+        else:
+            polished_parts.append(chunk)
+
+    return "".join(polished_parts)
 
 
 def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
@@ -1511,7 +1561,7 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
 
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = subtitle.add_run("抖音视频文字稿合集")
+    run = subtitle.add_run("视频文字稿合集")
     _set_run_font(run, "微软雅黑", 20)
     run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
 
