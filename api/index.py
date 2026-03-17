@@ -459,27 +459,37 @@ def _refresh_video_urls(aweme_id: str, cookie: str) -> dict:
 
 
 def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = ""):
-    """下载URL到本地文件，带重试"""
+    """下载URL到本地文件，使用httpx（更好的TLS指纹），带重试"""
+    import httpx
+
+    headers = {
+        "User-Agent": _DY_UA,
+        "Referer": "https://www.douyin.com/",
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept-Encoding": "identity",
+        "Connection": "keep-alive",
+        "Sec-Fetch-Dest": "audio",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Site": "cross-site",
+    }
+    if cookie:
+        headers["Cookie"] = cookie
+
     last_err = None
     for attempt in range(3):
         try:
-            req = urllib.request.Request(url)
-            req.add_header("User-Agent", _DY_UA)
-            req.add_header("Referer", "https://www.douyin.com/")
-            if cookie:
-                req.add_header("Cookie", cookie)
-            if proxy:
-                handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-                opener = urllib.request.build_opener(handler)
-                resp = opener.open(req, timeout=30)
-            else:
-                resp = urllib.request.urlopen(req, timeout=30)
-            with open(dest_path, "wb") as f:
-                while True:
-                    chunk = resp.read(8192)
-                    if not chunk:
-                        break
-                    f.write(chunk)
+            with httpx.Client(
+                timeout=30,
+                follow_redirects=True,
+                http2=True,
+                proxy=proxy if proxy else None,
+            ) as client:
+                with client.stream("GET", url, headers=headers) as resp:
+                    resp.raise_for_status()
+                    with open(dest_path, "wb") as f:
+                        for chunk in resp.iter_bytes(8192):
+                            f.write(chunk)
             return
         except Exception as e:
             last_err = e
