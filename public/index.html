@@ -1377,7 +1377,7 @@ function showResults() {
   if (done > 0) {
     $('downloadBtn').classList.remove('hidden');
     show('chatCard');
-    $('chatGreeting').textContent = `你好！我是「${STATE.creatorName}」的 AI 分身，有什么想聊的？`;
+    $('chatBox').innerHTML = `<div class="chat-bubble bot">你好！我是「${esc(STATE.creatorName)}」的 AI 分身，有什么想聊的？</div>`;
     if (STATE.secUid && STATE.creatorName) {
       saveAvatar(STATE.secUid, STATE.creatorName, $('keyword').value.trim(), total, done);
     }
