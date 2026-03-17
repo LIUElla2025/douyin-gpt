@@ -372,15 +372,21 @@ def transcribe():
         # --- 第2步：准备Whisper输入 ---
         whisper_file = tmp_path
 
-        # 对 mp4，尝试用 ffmpeg 提取纯音频（大幅缩小文件）
+        # 对 mp4，用 ffmpeg 提取纯音频（大幅缩小文件 + 修复截断容器）
         if tmp_path.endswith(".mp4"):
             try:
                 audio_path = _extract_audio(tmp_path)
                 tmp_files.append(audio_path)
                 whisper_file = audio_path
             except Exception:
-                # ffmpeg 不可用，直接用截断的 mp4（Whisper 支持 mp4）
-                whisper_file = tmp_path
+                # 直接复制失败，尝试重编码为 mp3（能修复截断 MP4）
+                try:
+                    mp3_path = _convert_to_mp3(tmp_path)
+                    tmp_files.append(mp3_path)
+                    whisper_file = mp3_path
+                except Exception:
+                    # 两种方式都失败，直接用原文件试试
+                    whisper_file = tmp_path
 
         # 最终大小检查（音频文件不应超过25MB，视频已截断到24MB）
         whisper_size = os.path.getsize(whisper_file)
@@ -487,7 +493,7 @@ def _refresh_video_urls(aweme_id: str, cookie: str) -> dict:
 def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
                    max_bytes: int = 0):
     """下载URL到本地文件。先用 httpx，失败后降级 urllib。
-    max_bytes>0 时用 Range 头限制下载量。
+    max_bytes>0 时在循环内截断下载。
     """
     headers = {
         "User-Agent": _DY_UA,
@@ -728,7 +734,7 @@ def _parse_pdf(file_obj) -> str:
     try:
         decoded = content.decode("utf-8", errors="ignore")
         # 过滤掉二进制垃圾，只保留中英文和标点
-        clean = re.sub(r"[^\u4e00-\u9fff\u3000-\u303fa-zA-Z0-9\s.,;:!?，。；：！？、""''（）\-\n]", "", decoded)
+        clean = re.sub(r"[^\u4e00-\u9fff\u3000-\u303fa-zA-Z0-9\s.,;:!?，。；：！？、\u201c\u201d\u2018\u2019（）\-\n]", "", decoded)
         lines = [l.strip() for l in clean.split("\n") if len(l.strip()) > 5]
         if lines:
             return "\n".join(lines)
@@ -1265,6 +1271,35 @@ def _extract_audio(video_path: str) -> str:
         raise RuntimeError("ffmpeg 输出文件为空")
 
     return audio_path
+
+
+def _convert_to_mp3(video_path: str) -> str:
+    """用 ffmpeg 将截断的视频强制转码为 mp3（能修复损坏的容器格式）"""
+    import subprocess
+
+    mp3_path = video_path.rsplit(".", 1)[0] + ".mp3"
+    ffmpeg_bin = _get_ffmpeg_bin()
+
+    cmd = [
+        ffmpeg_bin,
+        "-i", video_path,
+        "-vn",
+        "-acodec", "libmp3lame",
+        "-ar", "16000",
+        "-ac", "1",
+        "-b:a", "64k",
+        "-y",
+        mp3_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=60)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace")[-500:]
+        raise RuntimeError(f"ffmpeg 转码失败: {stderr}")
+
+    if not os.path.exists(mp3_path) or os.path.getsize(mp3_path) < 1000:
+        raise RuntimeError("ffmpeg 转码输出为空")
+
+    return mp3_path
 
 
 def _get_ffmpeg_bin() -> str:
