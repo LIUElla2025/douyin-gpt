@@ -321,61 +321,58 @@ def transcribe():
     tmp_files = []
 
     try:
-        suffix = ".mp3" if audio_url else ".mp4"
+        # --- 第1步：下载 ---
+        # 有 audio_url 时下载小音频文件；否则下载视频但限制 25MB
+        is_audio = bool(audio_url)
+        suffix = ".mp3" if is_audio else ".mp4"
+        max_dl = 0 if is_audio else 24 * 1024 * 1024  # 视频只下前24MB
+
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         tmp_path = tmp.name
         tmp.close()
         tmp_files.append(tmp_path)
 
-        _download_url(download_url, tmp_path, cookie, proxy)
+        _download_url(download_url, tmp_path, cookie, proxy, max_bytes=max_dl)
 
         file_size = os.path.getsize(tmp_path)
         if file_size < 1000:
+            # 主URL失败，尝试备用
             fallback = video_download_url if download_url == audio_url else audio_url
             if fallback and fallback != download_url:
-                new_suffix = ".mp4" if fallback == video_download_url else ".mp3"
+                is_fb_audio = (fallback == audio_url) if audio_url else False
+                new_suffix = ".mp3" if is_fb_audio else ".mp4"
+                fb_max = 0 if is_fb_audio else 24 * 1024 * 1024
                 new_tmp = tempfile.NamedTemporaryFile(suffix=new_suffix, delete=False)
                 new_tmp_path = new_tmp.name
                 new_tmp.close()
                 tmp_files.append(new_tmp_path)
-                _download_url(fallback, new_tmp_path, cookie, proxy)
+                _download_url(fallback, new_tmp_path, cookie, proxy, max_bytes=fb_max)
                 if os.path.getsize(new_tmp_path) >= 1000:
                     tmp_path = new_tmp_path
                     file_size = os.path.getsize(tmp_path)
             if file_size < 1000:
                 return jsonify({"error": f"音频文件太小({file_size}字节)，URL可能已过期"}), 400
-        # --- 准备Whisper输入文件 ---
+
+        # --- 第2步：准备Whisper输入 ---
         whisper_file = tmp_path
+
+        # 对 mp4，尝试用 ffmpeg 提取纯音频（大幅缩小文件）
         if tmp_path.endswith(".mp4"):
             try:
                 audio_path = _extract_audio(tmp_path)
                 tmp_files.append(audio_path)
                 whisper_file = audio_path
-            except Exception as extract_err:
-                # ffmpeg 提取失败，直接用 mp4 文件（Whisper 支持 mp4）
+            except Exception:
+                # ffmpeg 不可用，直接用截断的 mp4（Whisper 支持 mp4）
                 whisper_file = tmp_path
 
-        # 大文件处理：分段转录
+        # 最终大小检查（音频文件不应超过25MB，视频已截断到24MB）
         whisper_size = os.path.getsize(whisper_file)
         if whisper_size > 25 * 1024 * 1024:
-            # 尝试用 ffmpeg 压缩为低码率 mp3
-            try:
-                compressed = _compress_audio(whisper_file, tmp_files)
-                tmp_files.append(compressed)
-                whisper_file = compressed
-                whisper_size = os.path.getsize(whisper_file)
-            except Exception:
-                pass
-        if whisper_size > 25 * 1024 * 1024:
-            # 压缩后仍然太大，分段转录
-            try:
-                segments = _split_and_transcribe(whisper_file, openai_key, proxy, tmp_files)
-                transcript = {"text": segments, "segments": [], "language": "zh"}
-            except Exception as seg_err:
-                return jsonify({"error": f"大文件分段转录失败: {seg_err}"}), 500
-        else:
-            # --- 调用 Whisper ---
-            transcript = _call_whisper(whisper_file, openai_key, proxy)
+            return jsonify({"error": f"音频过大({whisper_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
+
+        # --- 第3步：调用 Whisper ---
+        transcript = _call_whisper(whisper_file, openai_key, proxy)
 
         # --- GPT 后处理加标点 ---
         raw_text = transcript.get("text", "") if isinstance(transcript, dict) else ""
@@ -471,8 +468,11 @@ def _refresh_video_urls(aweme_id: str, cookie: str) -> dict:
         return {"_error": str(e)}
 
 
-def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = ""):
-    """下载URL到本地文件，使用httpx（更好的TLS指纹），带重试"""
+def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
+                   max_bytes: int = 0):
+    """下载URL到本地文件，使用httpx（更好的TLS指纹），带重试。
+    max_bytes>0 时只下载前 max_bytes 字节（用于大视频截断下载）。
+    """
     import httpx
 
     headers = {
@@ -500,9 +500,13 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = ""):
             ) as client:
                 with client.stream("GET", url, headers=headers) as resp:
                     resp.raise_for_status()
+                    downloaded = 0
                     with open(dest_path, "wb") as f:
                         for chunk in resp.iter_bytes(8192):
                             f.write(chunk)
+                            downloaded += len(chunk)
+                            if max_bytes > 0 and downloaded >= max_bytes:
+                                break
             return
         except Exception as e:
             last_err = e
