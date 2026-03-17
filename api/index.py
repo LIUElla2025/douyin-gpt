@@ -530,6 +530,35 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
     raise RuntimeError(f"下载失败(重试3次): {last_err}")
 
 
+# ─── 文稿加标点 ───
+
+
+@app.route("/api/polish", methods=["POST"])
+def polish():
+    """给单个视频文稿添加标点符号"""
+    data = request.json or {}
+    cfg = _get_config(data)
+    text = data.get("text", "").strip()
+    openai_key = cfg["openai_api_key"]
+
+    if not text:
+        return jsonify({"error": "缺少文本"}), 400
+    if not openai_key:
+        return jsonify({"error": "缺少 OpenAI API Key"}), 400
+
+    # 已有足够标点则跳过
+    if _has_punctuation(text):
+        return jsonify({"polished": text, "skipped": True})
+
+    try:
+        polished = _polish_transcript(text, openai_key)
+        if polished:
+            return jsonify({"polished": polished, "skipped": False})
+        return jsonify({"polished": text, "skipped": True})
+    except Exception as e:
+        return jsonify({"error": f"加标点失败: {e}"}), 500
+
+
 # ─── 生成 Word 文档 ───
 
 

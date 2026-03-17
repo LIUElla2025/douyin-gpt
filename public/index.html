@@ -1386,8 +1386,52 @@ function showResults() {
 
 async function downloadDoc() {
   $('downloadBtn').disabled = true;
-  $('downloadBtn').textContent = '生成中...';
   try {
+    // 第1步：逐个给无标点文稿加标点
+    const needPolish = STATE.videos.filter(v => {
+      const t = v.transcript;
+      if (!t) return false;
+      const text = typeof t === 'string' ? t : (t.text || '');
+      if (!text || text.length < 20) return false;
+      const puncts = [...text].filter(c => '，。！？、；：""''（）…—'.includes(c)).length;
+      return puncts / text.length < 0.01;
+    });
+
+    if (needPolish.length > 0) {
+      let polished = 0;
+      for (const v of needPolish) {
+        polished++;
+        $('downloadBtn').textContent = `加标点 ${polished}/${needPolish.length}...`;
+        const t = v.transcript;
+        const text = typeof t === 'string' ? t : (t.text || '');
+        try {
+          const r = await fetch('/api/polish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+          });
+          if (r.ok) {
+            const d = await r.json();
+            if (!d.skipped && d.polished) {
+              if (typeof t === 'string') {
+                v.transcript = d.polished;
+              } else {
+                t.text = d.polished;
+                t.segments = [];
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`polish failed for ${v.title}:`, e);
+        }
+      }
+      // 更新缓存
+      const kw = $('keyword').value.trim();
+      saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, kw);
+    }
+
+    // 第2步：生成文档
+    $('downloadBtn').textContent = '生成文档...';
     const r = await fetch('/api/generate-doc', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
