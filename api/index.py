@@ -345,23 +345,8 @@ def transcribe():
             except Exception as e:
                 print(f"[transcribe] DASH音频失败: {e}")
 
-        # --- 策略2：ffmpeg 直接从视频 URL 提取音频（核心方案） ---
-        # ffmpeg 通过 HTTP Range 请求读取 moov 原子，无需下载整个视频
+        # --- 策略2：直接下载视频文件（小文件才行） ---
         vid_url = video_download_url or video_url
-        if vid_url and not whisper_file:
-            try:
-                mp3_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-                mp3_path = mp3_tmp.name
-                mp3_tmp.close()
-                tmp_files.append(mp3_path)
-                _extract_audio_from_url(vid_url, mp3_path, cookie)
-                if os.path.getsize(mp3_path) >= 1000:
-                    whisper_file = mp3_path
-                    print(f"[transcribe] ffmpeg URL提取成功, 大小={os.path.getsize(mp3_path)}")
-            except Exception as e:
-                print(f"[transcribe] ffmpeg URL提取失败: {e}")
-
-        # --- 策略3：直接下载视频文件（小文件才行） ---
         if vid_url and not whisper_file:
             try:
                 tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
