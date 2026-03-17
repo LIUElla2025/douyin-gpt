@@ -1902,7 +1902,7 @@ def _chat_with_creator(
             text = t.get("text", "") if isinstance(t, dict) else str(t)
             if text:
                 title = v.get("title", "")
-                profile_parts.append(f"【{title}】\n{text[:2000]}")
+                profile_parts.append(f"【{title}】\n{text}")
 
     profile = "\n\n---\n\n".join(profile_parts) if profile_parts else "暂无内容"
 
@@ -1927,7 +1927,7 @@ def _chat_with_creator(
             text = t.get("text", "") if isinstance(t, dict) else str(t)
             score = sum(1 for w in query_words if w in text)
             if score > 0:
-                scored.append((score, v.get("title", ""), text[:2000]))
+                scored.append((score, v.get("title", ""), text))
         scored.sort(key=lambda x: x[0], reverse=True)
         for _, title, text in scored[:5]:
             context_parts.append(f"【{title}】\n{text}")
