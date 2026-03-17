@@ -323,66 +323,89 @@ def transcribe():
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
-    # URL 优先级：DASH音频(口述,小文件) > download_addr(完整MP4) > 背景音乐(降级)
-    url_candidates = []
-    if dash_audio_url:
-        url_candidates.append(("dash_audio", dash_audio_url, ".m4a", 0))
-    if video_download_url:
-        url_candidates.append(("download", video_download_url, ".mp4", 24 * 1024 * 1024))
-    if video_url:
-        url_candidates.append(("video", video_url, ".mp4", 24 * 1024 * 1024))
-    if audio_url:
-        url_candidates.append(("music", audio_url, ".mp3", 0))
-
-    if not url_candidates:
+    if not dash_audio_url and not video_download_url and not video_url and not audio_url:
         return jsonify({"error": "缺少音频/视频 URL"}), 400
 
     tmp_files = []
 
     try:
-        # --- 第1步：按优先级尝试下载 ---
-        tmp_path = None
-        file_size = 0
-        for src_type, url, suffix, max_dl in url_candidates:
-            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-            tmp_p = tmp.name
-            tmp.close()
-            tmp_files.append(tmp_p)
+        whisper_file = None
+
+        # --- 策略1：DASH 纯音频流（最佳：口述内容，文件小） ---
+        if dash_audio_url and not whisper_file:
             try:
-                _download_url(url, tmp_p, cookie, proxy, max_bytes=max_dl)
+                tmp = tempfile.NamedTemporaryFile(suffix=".m4a", delete=False)
+                tmp_p = tmp.name
+                tmp.close()
+                tmp_files.append(tmp_p)
+                _download_url(dash_audio_url, tmp_p, cookie, proxy, max_bytes=0)
+                if os.path.getsize(tmp_p) >= 1000:
+                    whisper_file = tmp_p
+                    print(f"[transcribe] DASH音频成功, 大小={os.path.getsize(tmp_p)}")
+            except Exception as e:
+                print(f"[transcribe] DASH音频失败: {e}")
+
+        # --- 策略2：ffmpeg 直接从视频 URL 提取音频（核心方案） ---
+        # ffmpeg 通过 HTTP Range 请求读取 moov 原子，无需下载整个视频
+        vid_url = video_download_url or video_url
+        if vid_url and not whisper_file:
+            try:
+                mp3_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                mp3_path = mp3_tmp.name
+                mp3_tmp.close()
+                tmp_files.append(mp3_path)
+                _extract_audio_from_url(vid_url, mp3_path, cookie)
+                if os.path.getsize(mp3_path) >= 1000:
+                    whisper_file = mp3_path
+                    print(f"[transcribe] ffmpeg URL提取成功, 大小={os.path.getsize(mp3_path)}")
+            except Exception as e:
+                print(f"[transcribe] ffmpeg URL提取失败: {e}")
+
+        # --- 策略3：直接下载视频文件（小文件才行） ---
+        if vid_url and not whisper_file:
+            try:
+                tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+                tmp_p = tmp.name
+                tmp.close()
+                tmp_files.append(tmp_p)
+                _download_url(vid_url, tmp_p, cookie, proxy, max_bytes=24 * 1024 * 1024)
                 sz = os.path.getsize(tmp_p)
                 if sz >= 1000:
-                    tmp_path = tmp_p
-                    file_size = sz
-                    print(f"[transcribe] 使用 {src_type} 源, 大小={sz}")
-                    break
-            except Exception as dl_err:
-                print(f"[transcribe] {src_type} 下载失败: {dl_err}")
-                continue
+                    # 尝试 ffmpeg 提取音频
+                    try:
+                        audio_path = _extract_audio(tmp_p)
+                        tmp_files.append(audio_path)
+                        whisper_file = audio_path
+                    except Exception:
+                        try:
+                            mp3_p = _convert_to_mp3(tmp_p)
+                            tmp_files.append(mp3_p)
+                            whisper_file = mp3_p
+                        except Exception:
+                            # 尝试直接发给 Whisper
+                            whisper_file = tmp_p
+                    print(f"[transcribe] 直接下载, 大小={sz}")
+            except Exception as e:
+                print(f"[transcribe] 直接下载失败: {e}")
 
-        if not tmp_path or file_size < 1000:
-            return jsonify({"error": "所有音频源下载失败，URL可能已过期"}), 400
-
-        # --- 第2步：准备Whisper输入 ---
-        whisper_file = tmp_path
-
-        # 对 mp4，用 ffmpeg 提取纯音频（大幅缩小文件 + 修复截断容器）
-        if tmp_path.endswith(".mp4"):
+        # --- 策略4：背景音乐（降级方案，至少能转录出东西） ---
+        if audio_url and not whisper_file:
             try:
-                audio_path = _extract_audio(tmp_path)
-                tmp_files.append(audio_path)
-                whisper_file = audio_path
-            except Exception:
-                # 直接复制失败，尝试重编码为 mp3（能修复截断 MP4）
-                try:
-                    mp3_path = _convert_to_mp3(tmp_path)
-                    tmp_files.append(mp3_path)
-                    whisper_file = mp3_path
-                except Exception:
-                    # 两种方式都失败，直接用原文件试试
-                    whisper_file = tmp_path
+                tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                tmp_p = tmp.name
+                tmp.close()
+                tmp_files.append(tmp_p)
+                _download_url(audio_url, tmp_p, cookie, proxy, max_bytes=0)
+                if os.path.getsize(tmp_p) >= 1000:
+                    whisper_file = tmp_p
+                    print(f"[transcribe] 背景音乐降级, 大小={os.path.getsize(tmp_p)}")
+            except Exception as e:
+                print(f"[transcribe] 背景音乐失败: {e}")
 
-        # 最终大小检查（音频文件不应超过25MB，视频已截断到24MB）
+        if not whisper_file:
+            return jsonify({"error": "所有音频源均失败，URL可能已过期"}), 400
+
+        # 最终大小检查
         whisper_size = os.path.getsize(whisper_file)
         if whisper_size > 25 * 1024 * 1024:
             return jsonify({"error": f"音频过大({whisper_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
@@ -1247,6 +1270,47 @@ def _get_trak_handler(trak_content: bytes) -> str:
                         return hdlr_content[8:12].decode("ascii", errors="replace")
             break
     return ""
+
+
+def _extract_audio_from_url(url: str, output_path: str, cookie: str = "") -> str:
+    """用 ffmpeg 直接从视频 URL 提取音频。
+    ffmpeg 通过 HTTP Range 请求读取 moov 原子，无需下载整个文件。
+    """
+    import subprocess
+
+    ffmpeg_bin = _get_ffmpeg_bin()
+
+    # 构建 HTTP headers 供 ffmpeg 使用
+    headers_str = (
+        f"User-Agent: {_DY_UA}\r\n"
+        f"Referer: https://www.douyin.com/\r\n"
+        f"Accept: */*"
+    )
+    if cookie:
+        headers_str += f"\r\nCookie: {cookie}"
+
+    cmd = [
+        ffmpeg_bin,
+        "-headers", headers_str,
+        "-i", url,
+        "-vn",                      # 去掉视频
+        "-acodec", "libmp3lame",    # 编码为 mp3
+        "-ar", "16000",             # 16kHz（Whisper 够用）
+        "-ac", "1",                 # 单声道
+        "-b:a", "64k",              # 64kbps
+        "-t", "1800",               # 最多处理 30 分钟
+        "-y",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=120)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace")[-500:]
+        raise RuntimeError(f"ffmpeg URL提取失败: {stderr}")
+
+    if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
+        raise RuntimeError("ffmpeg URL提取输出为空")
+
+    return output_path
 
 
 def _extract_audio(video_path: str) -> str:
