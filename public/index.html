@@ -1190,7 +1190,10 @@ async function _fetchFreshUrls(secUid, keyword) {
             try {
               const d = JSON.parse(evtData);
               if (evtType === 'videos' && d.videos) allVideos.push(...d.videos);
-              if (evtType === 'status' && d.msg) setStatus(`刷新链接: ${d.msg}`, 'info');
+              if (evtType === 'status' && d.msg) {
+                setStatus(`刷新链接: ${d.msg}`, 'info');
+                if (d.page && d.total_pages) setProgress(Math.min(Math.round((d.page / d.total_pages) * 20), 20));
+              }
             } catch {}
           }
           pump();
