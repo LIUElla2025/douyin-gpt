@@ -376,15 +376,16 @@ def transcribe():
                         audio_path = _extract_audio(tmp_p)
                         tmp_files.append(audio_path)
                         whisper_file = audio_path
+                        print(f"[transcribe] 直接下载+ffmpeg提取成功, 大小={sz}")
                     except Exception:
                         try:
                             mp3_p = _convert_to_mp3(tmp_p)
                             tmp_files.append(mp3_p)
                             whisper_file = mp3_p
+                            print(f"[transcribe] 直接下载+mp3转换成功, 大小={sz}")
                         except Exception:
-                            # 尝试直接发给 Whisper
-                            whisper_file = tmp_p
-                    print(f"[transcribe] 直接下载, 大小={sz}")
+                            # 截断的MP4无法使用，跳过让策略4处理
+                            print(f"[transcribe] 直接下载的视频无法处理(可能被截断), 大小={sz}, 跳过")
             except Exception as e:
                 print(f"[transcribe] 直接下载失败: {e}")
 
@@ -1302,7 +1303,7 @@ def _extract_audio_from_url(url: str, output_path: str, cookie: str = "") -> str
         "-y",
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, timeout=45)
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace")[-500:]
         raise RuntimeError(f"ffmpeg URL提取失败: {stderr}")
