@@ -486,8 +486,8 @@ def _refresh_video_urls(aweme_id: str, cookie: str) -> dict:
 
 def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
                    max_bytes: int = 0):
-    """下载URL到本地文件，使用httpx（更好的TLS指纹），带重试。
-    max_bytes>0 时只下载前 max_bytes 字节（用于大视频截断下载）。
+    """下载URL到本地文件，使用httpx带重试。
+    StreamReset 时自动降级 HTTP/1.1；max_bytes>0 时截断下载。
     """
     import httpx
 
@@ -498,35 +498,45 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Accept-Encoding": "identity",
         "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "audio",
+        "Sec-Fetch-Dest": "video",
         "Sec-Fetch-Mode": "no-cors",
         "Sec-Fetch-Site": "cross-site",
     }
     if cookie:
         headers["Cookie"] = cookie
 
+    # 尝试策略：先 HTTP/2，遇到 StreamReset 降级 HTTP/1.1
+    strategies = [
+        {"http2": True, "http1": True},
+        {"http2": False, "http1": True},   # 降级 HTTP/1.1
+    ]
+
     last_err = None
-    for attempt in range(3):
-        try:
-            with httpx.Client(
-                timeout=30,
-                follow_redirects=True,
-                http2=True,
-                proxy=proxy if proxy else None,
-            ) as client:
-                with client.stream("GET", url, headers=headers) as resp:
-                    resp.raise_for_status()
-                    downloaded = 0
-                    with open(dest_path, "wb") as f:
-                        for chunk in resp.iter_bytes(8192):
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            if max_bytes > 0 and downloaded >= max_bytes:
-                                break
-            return
-        except Exception as e:
-            last_err = e
-            time.sleep(1)
+    for strategy in strategies:
+        for attempt in range(2):
+            try:
+                with httpx.Client(
+                    timeout=45,
+                    follow_redirects=True,
+                    proxy=proxy if proxy else None,
+                    **strategy,
+                ) as client:
+                    with client.stream("GET", url, headers=headers) as resp:
+                        resp.raise_for_status()
+                        downloaded = 0
+                        with open(dest_path, "wb") as f:
+                            for chunk in resp.iter_bytes(8192):
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                if max_bytes > 0 and downloaded >= max_bytes:
+                                    break
+                return
+            except Exception as e:
+                last_err = e
+                err_str = str(e)
+                if "StreamReset" in err_str or "stream" in err_str.lower():
+                    break  # 跳到下一个 strategy（降级）
+                time.sleep(1)
     raise RuntimeError(f"下载失败(重试3次): {last_err}")
 
 
