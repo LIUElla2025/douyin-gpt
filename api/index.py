@@ -344,12 +344,10 @@ def transcribe():
                     file_size = os.path.getsize(tmp_path)
             if file_size < 1000:
                 return jsonify({"error": f"音频文件太小({file_size}字节)，URL可能已过期"}), 400
-        if file_size > 25 * 1024 * 1024:
-            return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
-
         # --- 准备Whisper输入文件 ---
         whisper_file = tmp_path
         if tmp_path.endswith(".mp4"):
+            # 从视频中提取音频轨道（音频通常只有几MB，即使视频有75MB）
             try:
                 audio_path = _extract_audio(tmp_path)
                 tmp_files.append(audio_path)
@@ -360,6 +358,11 @@ def transcribe():
                 shutil.copy2(tmp_path, m4a_path)
                 tmp_files.append(m4a_path)
                 whisper_file = m4a_path
+
+        # 提取音频后再检查大小
+        whisper_size = os.path.getsize(whisper_file)
+        if whisper_size > 25 * 1024 * 1024:
+            return jsonify({"error": f"音频过大({whisper_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
 
         # --- 调用 Whisper ---
         transcript = _call_whisper(whisper_file, openai_key, proxy)
