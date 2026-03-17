@@ -56,9 +56,107 @@
     letter-spacing: -0.01em;
   }
 
+  /* ─── Layout ─── */
+  .app-layout {
+    display: flex;
+    min-height: calc(100vh - 200px);
+  }
+
+  /* ─── Sidebar ─── */
+  .sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: var(--card-bg);
+    border-right: 1px solid var(--border);
+    padding: 20px 0;
+    overflow-y: auto;
+    position: sticky;
+    top: 0;
+    height: calc(100vh - 200px);
+  }
+  .sidebar-header {
+    padding: 0 20px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .sidebar-empty {
+    padding: 24px 20px;
+    font-size: 13px;
+    color: #c7c7cc;
+    text-align: center;
+    line-height: 1.6;
+  }
+  .avatar-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-left: 3px solid transparent;
+  }
+  .avatar-item:hover { background: #f5f5f7; }
+  .avatar-item.active {
+    background: rgba(0,113,227,0.06);
+    border-left-color: var(--accent);
+  }
+  .avatar-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #5856d6);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .avatar-info {
+    flex: 1;
+    overflow: hidden;
+  }
+  .avatar-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .avatar-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+  .avatar-delete {
+    opacity: 0;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .avatar-item:hover .avatar-delete { opacity: 1; }
+  .avatar-delete:hover { color: var(--red); background: rgba(255,59,48,0.1); }
+
   /* ─── Container ─── */
   .container {
     max-width: 680px;
+    flex: 1;
     margin: 0 auto;
     padding: 0 24px 80px;
   }
@@ -383,6 +481,18 @@
 
   .hidden { display: none !important; }
 
+  @media (max-width: 800px) {
+    .app-layout { flex-direction: column; }
+    .sidebar {
+      width: 100%;
+      min-width: 100%;
+      height: auto;
+      max-height: 200px;
+      position: relative;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+  }
   @media (max-width: 600px) {
     .hero h1 { font-size: 32px; }
     .hero p { font-size: 16px; }
@@ -399,6 +509,16 @@
 <div class="hero">
   <h1>文字稿提取</h1>
   <p>输入抖音博主链接，一键转录全部视频为 Word 文档</p>
+</div>
+
+<div class="app-layout">
+
+<!-- 侧边栏：AI 分身列表 -->
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">AI 分身</div>
+  <div id="avatarList">
+    <div class="sidebar-empty">完成博主视频转录后<br>分身将出现在这里</div>
+  </div>
 </div>
 
 <div class="container">
@@ -456,7 +576,7 @@
   <!-- 对话 -->
   <div class="card hidden" id="chatCard">
     <div class="chat-box" id="chatBox">
-      <div class="chat-bubble bot">你好！我是这位博主的 AI 分身，有什么想聊的？</div>
+      <div class="chat-bubble bot" id="chatGreeting">你好！我是这位博主的 AI 分身，有什么想聊的？</div>
     </div>
     <div class="chat-input-row">
       <input type="text" id="chatInput" placeholder="输入你的问题..." onkeypress="if(event.key==='Enter')sendChat()">
@@ -465,6 +585,8 @@
   </div>
 
 </div>
+
+</div><!-- /app-layout -->
 
 <!-- Hidden fields for server-fallback config -->
 <input type="hidden" id="cookie" value="">
@@ -876,6 +998,7 @@ async function doFullExtraction(url) {
   hide('chatCard');
   $('titleScroll').innerHTML = '';
   $('titleScroll').classList.add('hidden');
+  chatHistory = [];
   startTimer();
 
   try {
@@ -1034,6 +1157,12 @@ function showResults() {
   if (done > 0) {
     $('downloadBtn').classList.remove('hidden');
     show('chatCard');
+    // 更新聊天问候语
+    $('chatGreeting').textContent = `你好！我是「${STATE.creatorName}」的 AI 分身，有什么想聊的？`;
+    // 保存/更新 AI 分身
+    if (STATE.secUid && STATE.creatorName) {
+      saveAvatar(STATE.secUid, STATE.creatorName, $('keyword').value.trim(), total, done);
+    }
   }
 }
 
@@ -1115,6 +1244,108 @@ function toggleHistory() {
 
 // 页面加载时渲染历史
 renderHistory();
+
+// ─── AI 分身侧边栏 ───
+const AVATARS_KEY = 'dy-avatars';
+
+function loadAvatars() {
+  try { return JSON.parse(localStorage.getItem(AVATARS_KEY) || '[]'); } catch(e) { return []; }
+}
+
+function saveAvatars(list) {
+  try { localStorage.setItem(AVATARS_KEY, JSON.stringify(list)); } catch(e) {}
+}
+
+function saveAvatar(secUid, creatorName, keyword, videoCount, transcribedCount) {
+  const list = loadAvatars();
+  const idx = list.findIndex(a => a.secUid === secUid && a.keyword === (keyword || ''));
+  const entry = {
+    secUid,
+    creatorName,
+    keyword: keyword || '',
+    videoCount,
+    transcribedCount,
+    savedAt: Date.now(),
+  };
+  if (idx >= 0) {
+    list[idx] = entry;
+  } else {
+    list.unshift(entry);
+  }
+  saveAvatars(list);
+  renderAvatars();
+}
+
+function deleteAvatar(secUid, keyword) {
+  const list = loadAvatars().filter(a => !(a.secUid === secUid && a.keyword === (keyword || '')));
+  saveAvatars(list);
+  renderAvatars();
+}
+
+function renderAvatars() {
+  const list = loadAvatars();
+  const el = $('avatarList');
+  if (!list.length) {
+    el.innerHTML = '<div class="sidebar-empty">完成博主视频转录后<br>分身将出现在这里</div>';
+    return;
+  }
+  el.innerHTML = '';
+  list.forEach(a => {
+    const div = document.createElement('div');
+    div.className = 'avatar-item';
+    // 高亮当前活跃的分身
+    if (STATE.secUid === a.secUid && ($('keyword').value.trim() || '') === a.keyword) {
+      div.classList.add('active');
+    }
+    const initial = (a.creatorName || '?')[0];
+    const kwTag = a.keyword ? ` · ${a.keyword}` : '';
+    div.innerHTML = `
+      <div class="avatar-icon">${esc(initial)}</div>
+      <div class="avatar-info">
+        <div class="avatar-name">${esc(a.creatorName || '未知博主')}</div>
+        <div class="avatar-meta">${a.transcribedCount}/${a.videoCount} 已转录${esc(kwTag)}</div>
+      </div>
+      <button class="avatar-delete" title="删除" onclick="event.stopPropagation();deleteAvatar('${a.secUid}','${a.keyword}')">×</button>
+    `;
+    div.onclick = () => switchAvatar(a);
+    el.appendChild(div);
+  });
+}
+
+function switchAvatar(avatar) {
+  // 加载该分身的缓存数据
+  const cached = loadVideoList(avatar.secUid, avatar.keyword);
+  if (!cached) {
+    alert('该分身的数据已过期，请重新提取');
+    deleteAvatar(avatar.secUid, avatar.keyword);
+    return;
+  }
+
+  STATE.secUid = avatar.secUid;
+  STATE.videos = cached.videos;
+  STATE.creatorName = cached.creatorName || avatar.creatorName;
+  $('keyword').value = avatar.keyword || '';
+
+  // 恢复转录
+  restoreTranscripts(STATE.videos);
+
+  // 重置聊天
+  chatHistory = [];
+  $('chatBox').innerHTML = `<div class="chat-bubble bot">你好！我是「${esc(STATE.creatorName)}」的 AI 分身，有什么想聊的？</div>`;
+
+  // 显示结果和聊天
+  showResults();
+  show('chatCard');
+
+  // 隐藏进度
+  hide('progressCard');
+
+  // 更新侧边栏高亮
+  renderAvatars();
+}
+
+// 页面加载时渲染分身列表
+renderAvatars();
 
 let chatHistory = [];
 async function sendChat() {
