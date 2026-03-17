@@ -1419,6 +1419,7 @@ async function downloadDoc() {
                 t.text = d.polished;
                 t.segments = [];
               }
+              saveTranscript(v.id, v.transcript);
             }
           }
         } catch (e) {
@@ -1437,7 +1438,11 @@ async function downloadDoc() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videos: STATE.videos, creator_name: STATE.creatorName }),
     });
-    if (!r.ok) throw new Error((await r.json()).error);
+    if (!r.ok) {
+      let errMsg = 'Error ' + r.status;
+      try { errMsg = (await r.json()).error || errMsg; } catch {}
+      throw new Error(errMsg);
+    }
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -1578,8 +1583,9 @@ function renderAvatars() {
         <div class="avatar-name">${esc(a.creatorName || '未知')}</div>
         <div class="avatar-meta">${esc(metaText)}</div>
       </div>
-      <button class="avatar-delete" title="删除" onclick="event.stopPropagation();deleteAvatar('${a.secUid}','${a.keyword}')">×</button>
+      <button class="avatar-delete" title="删除">×</button>
     `;
+    div.querySelector('.avatar-delete').onclick = (e) => { e.stopPropagation(); deleteAvatar(a.secUid, a.keyword); };
     div.onclick = () => switchAvatar(a);
     el.appendChild(div);
   });
