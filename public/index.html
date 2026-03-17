@@ -1402,6 +1402,7 @@ function showResults() {
     $('downloadBtn').classList.remove('hidden');
     show('chatCard');
     $('chatBox').innerHTML = `<div class="chat-bubble bot">你好！我是「${esc(STATE.creatorName)}」的 AI 分身，有什么想聊的？</div>`;
+    _loadChatHistory();
     if (STATE.secUid && STATE.creatorName) {
       saveAvatar(STATE.secUid, STATE.creatorName, $('keyword').value.trim(), total, done);
     }
@@ -1640,6 +1641,7 @@ function switchAvatar(avatar) {
 
   chatHistory = [];
   $('chatBox').innerHTML = `<div class="chat-bubble bot">你好！我是「${esc(STATE.creatorName)}」的 AI 分身，有什么想聊的？</div>`;
+  _loadChatHistory();
 
   showResults();
   show('chatCard');
@@ -1740,11 +1742,29 @@ function switchCorpusAvatar(corpusId) {
 
   chatHistory = [];
   $('chatBox').innerHTML = `<div class="chat-bubble bot">你好！我是「${esc(corpus.avatarName)}」，基于「${esc(corpus.filename)}」创建。有什么想问的？</div>`;
+  _loadChatHistory();
 
   show('chatCard');
   hide('progressCard');
   hide('resultCard');
   renderAvatars();
+}
+
+function _formatMd(text) {
+  // 简易 Markdown → HTML：段落、加粗、列表、分隔线
+  let html = esc(text);
+  // 加粗 **text**
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // 分隔线 ---
+  html = html.replace(/^-{3,}$/gm, '<hr style="border:none;border-top:1px solid var(--border-light);margin:12px 0">');
+  // 列表项 - text 或 数字. text
+  html = html.replace(/^(\d+)\.\s+/gm, '<br>$1. ');
+  html = html.replace(/^-\s+/gm, '<br>• ');
+  // 双换行 → 段落分隔
+  html = html.replace(/\n\n/g, '<br><br>');
+  // 单换行 → <br>
+  html = html.replace(/\n/g, '<br>');
+  return html;
 }
 
 function _addCopyBtn(bubble, text) {
@@ -1762,6 +1782,41 @@ function _addCopyBtn(bubble, text) {
 }
 
 let chatHistory = [];
+
+function _getChatKey() {
+  return 'chat_' + (STATE.creatorName || STATE._corpusFilename || 'default');
+}
+function _saveChatHistory() {
+  try { localStorage.setItem(_getChatKey(), JSON.stringify(chatHistory)); } catch {}
+}
+function _loadChatHistory() {
+  try {
+    const saved = localStorage.getItem(_getChatKey());
+    if (!saved) return;
+    chatHistory = JSON.parse(saved);
+    const box = $('chatBox');
+    // 保留问候语，追加历史消息
+    for (let i = 0; i < chatHistory.length; i += 2) {
+      const userMsg = chatHistory[i];
+      const botMsg = chatHistory[i + 1];
+      if (userMsg) {
+        const u = document.createElement('div');
+        u.className = 'chat-bubble user';
+        u.textContent = userMsg.content;
+        box.appendChild(u);
+      }
+      if (botMsg) {
+        const b = document.createElement('div');
+        b.className = 'chat-bubble bot';
+        b.innerHTML = _formatMd(botMsg.content);
+        _addCopyBtn(b, botMsg.content);
+        box.appendChild(b);
+      }
+    }
+    box.scrollTop = box.scrollHeight;
+  } catch {}
+}
+
 async function sendChat() {
   const input = $('chatInput');
   const msg = input.value.trim();
@@ -1795,8 +1850,9 @@ async function sendChat() {
     const res = await api('chat', chatBody);
     chatHistory.push({ role: 'user', content: msg });
     chatHistory.push({ role: 'assistant', content: res.response });
-    bot.textContent = res.response;
+    bot.innerHTML = _formatMd(res.response);
     _addCopyBtn(bot, res.response);
+    _saveChatHistory();
   } catch (e) {
     bot.textContent = '出错了：' + e.message;
     bot.style.color = 'var(--red)';
