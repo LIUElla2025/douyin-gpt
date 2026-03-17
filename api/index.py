@@ -190,29 +190,29 @@ def fetch_videos():
                     duration = item.get("video", {}).get("duration", 0)
                     if isinstance(duration, (int, float)) and duration > 10000:
                         duration = duration // 1000
-                    # 视频下载URL：优先用 download_addr（完整MP4，含音频+视频），
-                    # play_addr 是 DASH fMP4 格式，通常只含视频轨道无音频
+                    # 视频下载URL：优先最低码率（文件小，截断安全），
+                    # 然后 play_addr（fMP4 流媒体），最后 download_addr（标准 MP4，大文件）
                     video_obj = item.get("video", {})
                     video_download_url = ""
-                    # 方式1: download_addr（完整MP4，含音频轨道）
-                    download_addr = video_obj.get("download_addr", {})
-                    da_list = download_addr.get("url_list", [])
-                    if da_list:
-                        video_download_url = da_list[0]
-                    # 方式2: play_addr（DASH fMP4，可能仅含视频轨道）
+                    # 方式1: 最低码率的 play_addr（文件最小，适合转录）
+                    bit_rates = video_obj.get("bit_rate", [])
+                    if bit_rates:
+                        lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
+                        br_addr = lowest.get("play_addr", {})
+                        br_list = br_addr.get("url_list", [])
+                        video_download_url = br_list[0] if br_list else ""
+                    # 方式2: play_addr（fMP4 流媒体格式，截断后仍可用）
                     if not video_download_url:
                         play_addr = video_obj.get("play_addr", {})
                         pa_list = play_addr.get("url_list", [])
                         if pa_list:
                             video_download_url = pa_list[0]
-                    # 方式3: 最低码率（备选）
+                    # 方式3: download_addr（完整 MP4，文件大，截断后 moov 丢失）
                     if not video_download_url:
-                        bit_rates = video_obj.get("bit_rate", [])
-                        if bit_rates:
-                            lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
-                            br_addr = lowest.get("play_addr", {})
-                            br_list = br_addr.get("url_list", [])
-                            video_download_url = br_list[0] if br_list else ""
+                        download_addr = video_obj.get("download_addr", {})
+                        da_list = download_addr.get("url_list", [])
+                        if da_list:
+                            video_download_url = da_list[0]
                     # 背景音乐URL（最后备选）
                     music = item.get("music", {})
                     play_url_list = (music.get("play_url") or {}).get("url_list", [])
@@ -330,18 +330,23 @@ def transcribe():
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
-    download_url = audio_url or video_download_url or video_url
-    if not download_url:
+    # 优先视频文件（含口述内容），audio_url 是背景音乐仅作为最后降级
+    download_url = video_download_url or video_url
+    if not download_url and not audio_url:
         return jsonify({"error": "缺少音频/视频 URL"}), 400
 
     tmp_files = []
 
     try:
         # --- 第1步：下载 ---
-        # 有 audio_url 时下载小音频文件；否则下载视频但限制 25MB
-        is_audio = bool(audio_url)
-        suffix = ".mp3" if is_audio else ".mp4"
-        max_dl = 0 if is_audio else 24 * 1024 * 1024  # 视频只下前24MB
+        if download_url:
+            suffix = ".mp4"
+            max_dl = 24 * 1024 * 1024  # 视频限制 24MB
+        else:
+            # 所有视频 URL 都不可用，降级到背景音乐
+            download_url = audio_url
+            suffix = ".mp3"
+            max_dl = 0
 
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         tmp_path = tmp.name
@@ -352,19 +357,15 @@ def transcribe():
 
         file_size = os.path.getsize(tmp_path)
         if file_size < 1000:
-            # 主URL失败，尝试备用
-            fallback = video_download_url if download_url == audio_url else audio_url
-            if fallback and fallback != download_url:
-                is_fb_audio = (fallback == audio_url) if audio_url else False
-                new_suffix = ".mp3" if is_fb_audio else ".mp4"
-                fb_max = 0 if is_fb_audio else 24 * 1024 * 1024
-                new_tmp = tempfile.NamedTemporaryFile(suffix=new_suffix, delete=False)
-                new_tmp_path = new_tmp.name
-                new_tmp.close()
-                tmp_files.append(new_tmp_path)
-                _download_url(fallback, new_tmp_path, cookie, proxy, max_bytes=fb_max)
-                if os.path.getsize(new_tmp_path) >= 1000:
-                    tmp_path = new_tmp_path
+            # 主URL失败，尝试备用（背景音乐作为最后手段）
+            if audio_url and download_url != audio_url:
+                fb_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                fb_tmp_path = fb_tmp.name
+                fb_tmp.close()
+                tmp_files.append(fb_tmp_path)
+                _download_url(audio_url, fb_tmp_path, cookie, proxy, max_bytes=0)
+                if os.path.getsize(fb_tmp_path) >= 1000:
+                    tmp_path = fb_tmp_path
                     file_size = os.path.getsize(tmp_path)
             if file_size < 1000:
                 return jsonify({"error": f"音频文件太小({file_size}字节)，URL可能已过期"}), 400
@@ -471,18 +472,25 @@ def _refresh_video_urls(aweme_id: str, cookie: str) -> dict:
         play_url_list = (music.get("play_url") or {}).get("url_list", [])
         audio_url = play_url_list[0] if play_url_list else ""
 
-        # 提取视频下载URL
+        # 提取视频下载URL（优先最低码率，文件小）
         video_obj = item.get("video", {})
         video_download_url = ""
-        download_addr = video_obj.get("download_addr", {})
-        da_list = download_addr.get("url_list", [])
-        if da_list:
-            video_download_url = da_list[0]
+        bit_rates = video_obj.get("bit_rate", [])
+        if bit_rates:
+            lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
+            br_addr = lowest.get("play_addr", {})
+            br_list = br_addr.get("url_list", [])
+            video_download_url = br_list[0] if br_list else ""
         if not video_download_url:
             play_addr = video_obj.get("play_addr", {})
             pa_list = play_addr.get("url_list", [])
             if pa_list:
                 video_download_url = pa_list[0]
+        if not video_download_url:
+            download_addr = video_obj.get("download_addr", {})
+            da_list = download_addr.get("url_list", [])
+            if da_list:
+                video_download_url = da_list[0]
 
         return {"audio_url": audio_url, "video_download_url": video_download_url}
     except Exception as e:
@@ -521,12 +529,18 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
                 ) as client:
                     with client.stream("GET", url, headers=headers) as resp:
                         resp.raise_for_status()
+                        # 如果文件小于限制，不截断（确保完整下载）
+                        content_len = resp.headers.get("content-length")
+                        effective_max = max_bytes
+                        if content_len and max_bytes > 0:
+                            if int(content_len) <= max_bytes:
+                                effective_max = 0  # 文件够小，完整下载
                         downloaded = 0
                         with open(dest_path, "wb") as f:
                             for chunk in resp.iter_bytes(8192):
                                 f.write(chunk)
                                 downloaded += len(chunk)
-                                if max_bytes > 0 and downloaded >= max_bytes:
+                                if effective_max > 0 and downloaded >= effective_max:
                                     break
                 if os.path.getsize(dest_path) >= 1000:
                     return
@@ -544,6 +558,12 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
             req.add_header(k, v)
         ctx = ssl.create_default_context()
         resp = urllib.request.urlopen(req, timeout=90, context=ctx)
+        # 如果文件小于限制，完整下载
+        content_len = resp.headers.get("Content-Length")
+        effective_max = max_bytes
+        if content_len and max_bytes > 0:
+            if int(content_len) <= max_bytes:
+                effective_max = 0
         downloaded = 0
         with open(dest_path, "wb") as f:
             while True:
@@ -552,7 +572,7 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
                     break
                 f.write(chunk)
                 downloaded += len(chunk)
-                if max_bytes > 0 and downloaded >= max_bytes:
+                if effective_max > 0 and downloaded >= effective_max:
                     break
         if os.path.getsize(dest_path) >= 1000:
             return
@@ -1051,28 +1071,28 @@ def _fetch_videos_direct(
             duration = item.get("video", {}).get("duration", 0)
             if isinstance(duration, (int, float)) and duration > 10000:
                 duration = duration // 1000
-            # 视频下载URL：优先 download_addr（完整MP4含音频），play_addr是fMP4仅含视频
+            # 视频下载URL：优先最低码率（文件小），然后 play_addr，最后 download_addr
             video_obj = item.get("video", {})
             video_download_url = ""
-            # 方式1: download_addr（完整MP4，含音频轨道）
-            download_addr = video_obj.get("download_addr", {})
-            da_list = download_addr.get("url_list", [])
-            if da_list:
-                video_download_url = da_list[0]
-            # 方式2: play_addr（DASH fMP4，可能仅含视频轨道）
+            # 方式1: 最低码率的 play_addr（文件最小，适合转录）
+            bit_rates = video_obj.get("bit_rate", [])
+            if bit_rates:
+                lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
+                br_addr = lowest.get("play_addr", {})
+                br_list = br_addr.get("url_list", [])
+                video_download_url = br_list[0] if br_list else ""
+            # 方式2: play_addr（fMP4 流媒体格式）
             if not video_download_url:
                 play_addr = video_obj.get("play_addr", {})
                 pa_list = play_addr.get("url_list", [])
                 if pa_list:
                     video_download_url = pa_list[0]
-            # 方式3: 最低码率（备选）
+            # 方式3: download_addr（完整 MP4，文件大）
             if not video_download_url:
-                bit_rates = video_obj.get("bit_rate", [])
-                if bit_rates:
-                    lowest = min(bit_rates, key=lambda b: b.get("bit_rate", float("inf")))
-                    br_addr = lowest.get("play_addr", {})
-                    br_list = br_addr.get("url_list", [])
-                    video_download_url = br_list[0] if br_list else ""
+                download_addr = video_obj.get("download_addr", {})
+                da_list = download_addr.get("url_list", [])
+                if da_list:
+                    video_download_url = da_list[0]
             # 背景音乐URL（最后备选）
             music = item.get("music", {})
             play_url_list = (music.get("play_url") or {}).get("url_list", [])
@@ -1256,6 +1276,7 @@ def _extract_audio(video_path: str) -> str:
 
     cmd = [
         ffmpeg_bin,
+        "-err_detect", "ignore_err",   # 容忍截断/损坏的容器
         "-i", video_path,
         "-vn",              # 去掉视频
         "-acodec", "copy",  # 音频直接复制，不重编码
@@ -1282,6 +1303,7 @@ def _convert_to_mp3(video_path: str) -> str:
 
     cmd = [
         ffmpeg_bin,
+        "-err_detect", "ignore_err",   # 容忍截断/损坏的容器
         "-i", video_path,
         "-vn",
         "-acodec", "libmp3lame",
