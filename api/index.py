@@ -499,8 +499,6 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
     }
     if cookie:
         headers["Cookie"] = cookie
-    if max_bytes > 0:
-        headers["Range"] = f"bytes=0-{max_bytes - 1}"
 
     last_err = None
 
@@ -516,8 +514,7 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
                     proxy=proxy if proxy else None,
                 ) as client:
                     with client.stream("GET", url, headers=headers) as resp:
-                        if resp.status_code not in (200, 206):
-                            resp.raise_for_status()
+                        resp.raise_for_status()
                         downloaded = 0
                         with open(dest_path, "wb") as f:
                             for chunk in resp.iter_bytes(8192):
