@@ -347,25 +347,35 @@ def transcribe():
         # --- 准备Whisper输入文件 ---
         whisper_file = tmp_path
         if tmp_path.endswith(".mp4"):
-            # 从视频中提取音频轨道（音频通常只有几MB，即使视频有75MB）
             try:
                 audio_path = _extract_audio(tmp_path)
                 tmp_files.append(audio_path)
                 whisper_file = audio_path
-            except Exception:
-                m4a_path = tmp_path.rsplit(".", 1)[0] + ".m4a"
-                import shutil
-                shutil.copy2(tmp_path, m4a_path)
-                tmp_files.append(m4a_path)
-                whisper_file = m4a_path
+            except Exception as extract_err:
+                # ffmpeg 提取失败，直接用 mp4 文件（Whisper 支持 mp4）
+                whisper_file = tmp_path
 
-        # 提取音频后再检查大小
+        # 大文件处理：分段转录
         whisper_size = os.path.getsize(whisper_file)
         if whisper_size > 25 * 1024 * 1024:
-            return jsonify({"error": f"音频过大({whisper_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
-
-        # --- 调用 Whisper ---
-        transcript = _call_whisper(whisper_file, openai_key, proxy)
+            # 尝试用 ffmpeg 压缩为低码率 mp3
+            try:
+                compressed = _compress_audio(whisper_file, tmp_files)
+                tmp_files.append(compressed)
+                whisper_file = compressed
+                whisper_size = os.path.getsize(whisper_file)
+            except Exception:
+                pass
+        if whisper_size > 25 * 1024 * 1024:
+            # 压缩后仍然太大，分段转录
+            try:
+                segments = _split_and_transcribe(whisper_file, openai_key, proxy, tmp_files)
+                transcript = {"text": segments, "segments": [], "language": "zh"}
+            except Exception as seg_err:
+                return jsonify({"error": f"大文件分段转录失败: {seg_err}"}), 500
+        else:
+            # --- 调用 Whisper ---
+            transcript = _call_whisper(whisper_file, openai_key, proxy)
 
         # --- GPT 后处理加标点 ---
         raw_text = transcript.get("text", "") if isinstance(transcript, dict) else ""
@@ -1069,12 +1079,7 @@ def _extract_audio(video_path: str) -> str:
 
     audio_path = video_path.rsplit(".", 1)[0] + ".m4a"
 
-    # 尝试用 imageio-ffmpeg 获取 ffmpeg 路径
-    try:
-        import imageio_ffmpeg
-        ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
-    except ImportError:
-        ffmpeg_bin = "ffmpeg"  # 系统 ffmpeg
+    ffmpeg_bin = _get_ffmpeg_bin()
 
     cmd = [
         ffmpeg_bin,
@@ -1093,6 +1098,74 @@ def _extract_audio(video_path: str) -> str:
         raise RuntimeError("ffmpeg 输出文件为空")
 
     return audio_path
+
+
+def _get_ffmpeg_bin() -> str:
+    """获取 ffmpeg 可执行文件路径"""
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return "ffmpeg"
+
+
+def _compress_audio(input_path: str, tmp_files: list) -> str:
+    """用 ffmpeg 将音频压缩为低码率 MP3（目标 <25MB）"""
+    import subprocess
+
+    mp3_path = input_path.rsplit(".", 1)[0] + "_compressed.mp3"
+    ffmpeg_bin = _get_ffmpeg_bin()
+
+    cmd = [
+        ffmpeg_bin,
+        "-i", input_path,
+        "-vn",
+        "-acodec", "libmp3lame",
+        "-ab", "32k",       # 极低码率，保证文件够小
+        "-ar", "16000",     # 16kHz 采样率（Whisper 足够）
+        "-ac", "1",         # 单声道
+        "-y",
+        mp3_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=120)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace")[-500:]
+        raise RuntimeError(f"ffmpeg 压缩失败: {stderr}")
+
+    if not os.path.exists(mp3_path) or os.path.getsize(mp3_path) < 1000:
+        raise RuntimeError("ffmpeg 压缩输出为空")
+
+    return mp3_path
+
+
+def _split_and_transcribe(file_path: str, api_key: str, proxy: str, tmp_files: list) -> str:
+    """大文件分段：每段 24MB，分别转录后拼接文本"""
+    max_chunk = 24 * 1024 * 1024
+    file_size = os.path.getsize(file_path)
+    all_text = []
+
+    with open(file_path, "rb") as f:
+        chunk_idx = 0
+        while True:
+            data = f.read(max_chunk)
+            if not data:
+                break
+            chunk_path = file_path.rsplit(".", 1)[0] + f"_chunk{chunk_idx}.mp4"
+            with open(chunk_path, "wb") as cf:
+                cf.write(data)
+            tmp_files.append(chunk_path)
+
+            try:
+                result = _call_whisper(chunk_path, api_key, proxy)
+                text = result.get("text", "") if isinstance(result, dict) else ""
+                if text:
+                    all_text.append(text)
+            except Exception:
+                pass  # 跳过失败的段
+
+            chunk_idx += 1
+
+    return "".join(all_text)
 
 
 def _polish_transcript(raw_text: str, api_key: str) -> str:
