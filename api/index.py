@@ -1064,67 +1064,33 @@ def _get_trak_handler(trak_content: bytes) -> str:
 
 
 def _extract_audio(video_path: str) -> str:
-    """纯 Python：从 MP4 中剥离视频轨道，只保留音频轨道，输出 .m4a。
-    无任何外部依赖。解决抖音 H.265 视频导致 Whisper 无法解码的问题。
-    """
-    import struct
+    """用 ffmpeg 从视频中提取纯音频（AAC/M4A），文件大小大幅缩小。"""
+    import subprocess
 
     audio_path = video_path.rsplit(".", 1)[0] + ".m4a"
 
-    with open(video_path, "rb") as f:
-        data = f.read()
+    # 尝试用 imageio-ffmpeg 获取 ffmpeg 路径
+    try:
+        import imageio_ffmpeg
+        ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        ffmpeg_bin = "ffmpeg"  # 系统 ffmpeg
 
-    top_boxes = _parse_boxes(data)
-    top_types = [bt.decode("ascii", errors="replace") for _, _, bt in top_boxes]
+    cmd = [
+        ffmpeg_bin,
+        "-i", video_path,
+        "-vn",              # 去掉视频
+        "-acodec", "copy",  # 音频直接复制，不重编码
+        "-y",               # 覆盖
+        audio_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=60)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace")[-500:]
+        raise RuntimeError(f"ffmpeg 提取音频失败: {stderr}")
 
-    # 找 moov
-    moov_info = None
-    for bpos, bsize, bt in top_boxes:
-        if bt == b"moov":
-            moov_info = (bpos, bsize)
-            break
-    if moov_info is None:
-        raise RuntimeError(f"MP4 无 moov box (顶层: {top_types})")
-
-    moov_pos, moov_size = moov_info
-    moov_content = data[moov_pos + 8:moov_pos + moov_size]
-    moov_children = _parse_boxes(moov_content)
-
-    # 找所有 trak 并识别 handler
-    audio_traks = []
-    all_handlers = []
-    for cpos, csize, ctype in moov_children:
-        if ctype == b"trak":
-            trak_content = moov_content[cpos + 8:cpos + csize]
-            handler = _get_trak_handler(trak_content)
-            all_handlers.append(handler)
-            if handler == "soun":
-                audio_traks.append((cpos, csize))
-
-    if not audio_traks:
-        raise RuntimeError(
-            f"无音频轨道 (找到 {len(all_handlers)} 个 trak, "
-            f"handler: {all_handlers}, 顶层: {top_types})"
-        )
-
-    # 重建 moov：只保留音频 trak + 非 trak box
-    new_moov = bytearray()
-    audio_trak_set = set(p for p, _ in audio_traks)
-    for cpos, csize, ctype in moov_children:
-        if ctype == b"trak":
-            if cpos in audio_trak_set:
-                new_moov.extend(moov_content[cpos:cpos + csize])
-        else:
-            new_moov.extend(moov_content[cpos:cpos + csize])
-
-    with open(audio_path, "wb") as out:
-        for bpos, bsize, bt in top_boxes:
-            if bt == b"moov":
-                out.write(struct.pack(">I", len(new_moov) + 8))
-                out.write(b"moov")
-                out.write(new_moov)
-            else:
-                out.write(data[bpos:bpos + bsize])
+    if not os.path.exists(audio_path) or os.path.getsize(audio_path) < 1000:
+        raise RuntimeError("ffmpeg 输出文件为空")
 
     return audio_path
 
