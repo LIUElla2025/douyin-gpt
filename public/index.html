@@ -669,7 +669,7 @@ function _fetchVideosOnce(secUid, keyword, startCursor, startPage, prevScanned) 
         } else if (type === 'videos') {
           data.videos.forEach(v => {
             STATE.videos.push(v);
-            addTitle('▸ ' + v.title.substring(0, 50));
+            addTitle(`${STATE.videos.length}. ${v.title.substring(0, 50)}`);
           });
           setStatus(`已获取 ${data.fetched}/${data.total} 个匹配视频...`, 'info');
           if (data.total > 0) {
