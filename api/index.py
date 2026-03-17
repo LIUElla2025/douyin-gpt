@@ -1303,7 +1303,7 @@ def _extract_audio_from_url(url: str, output_path: str, cookie: str = "") -> str
         "-y",
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=45)
+    result = subprocess.run(cmd, capture_output=True, timeout=30)
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace")[-500:]
         raise RuntimeError(f"ffmpeg URL提取失败: {stderr}")
