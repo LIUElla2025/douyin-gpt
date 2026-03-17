@@ -326,6 +326,8 @@ def transcribe():
     if not dash_audio_url and not video_download_url and not video_url and not audio_url:
         return jsonify({"error": "缺少音频/视频 URL"}), 400
 
+    print(f"[transcribe] URLs: dash={bool(dash_audio_url)}, download={bool(video_download_url)}, video={bool(video_url)}, audio={bool(audio_url)}")
+
     tmp_files = []
 
     try:
@@ -388,8 +390,20 @@ def transcribe():
             except Exception as e:
                 print(f"[transcribe] 背景音乐失败: {e}")
 
+        # 验证文件是否为有效的音视频（防止 HTML 错误页面被发给 Whisper）
+        if whisper_file:
+            try:
+                with open(whisper_file, "rb") as f:
+                    header = f.read(16)
+                # HTML 页面以 < 开头，或者是纯文本
+                if header[:1] == b'<' or header[:5] == b'<!DOC' or header[:4] == b'HTTP':
+                    print(f"[transcribe] 下载到的不是音视频文件(可能是HTML错误页), header={header[:20]}")
+                    whisper_file = None
+            except Exception:
+                pass
+
         if not whisper_file:
-            return jsonify({"error": "所有音频源均失败，URL可能已过期"}), 400
+            return jsonify({"error": f"所有音频源均失败，URL可能已过期。debug: dash={bool(dash_audio_url)}, download={bool(video_download_url)}, audio={bool(audio_url)}"}), 400
 
         # 最终大小检查
         whisper_size = os.path.getsize(whisper_file)
@@ -397,6 +411,11 @@ def transcribe():
             return jsonify({"error": f"音频过大({whisper_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
 
         # --- 第3步：调用 Whisper ---
+        print(f"[transcribe] 发送给Whisper: {whisper_file}, 大小={os.path.getsize(whisper_file)}")
+        # 读取前几个字节作为调试信息
+        with open(whisper_file, "rb") as _dbg:
+            _hdr = _dbg.read(8)
+        print(f"[transcribe] 文件头: {_hdr.hex()} ({_hdr[:4]})")
         transcript = _call_whisper(whisper_file, openai_key, proxy)
 
         # --- GPT 后处理加标点 ---
@@ -413,7 +432,16 @@ def transcribe():
         return jsonify({"transcript": transcript})
 
     except Exception as e:
-        return jsonify({"error": f"转录失败: {e}"}), 500
+        # 把 whisper_file 的调试信息加到错误中
+        dbg = ""
+        if whisper_file and os.path.exists(whisper_file):
+            try:
+                with open(whisper_file, "rb") as _f:
+                    _h = _f.read(8)
+                dbg = f" | file={os.path.basename(whisper_file)}, sz={os.path.getsize(whisper_file)}, hdr={_h.hex()}"
+            except Exception:
+                pass
+        return jsonify({"error": f"转录失败: {e}{dbg}"}), 500
     finally:
         for f in tmp_files:
             try:
@@ -1545,7 +1573,7 @@ def _call_whisper(audio_path: str, api_key: str, proxy: str = "") -> dict:
             err_body = http_err.read().decode("utf-8", errors="replace")[:500]
         except Exception:
             pass
-        raise RuntimeError(f"Whisper HTTP {http_err.code}: {err_body}") from http_err
+        raise RuntimeError(f"Whisper HTTP {http_err.code}: {err_body} | file={filename}, sz={len(file_data)}, hdr={file_data[:8].hex()}") from http_err
     result = json.loads(resp.read().decode())
 
     segments = []
