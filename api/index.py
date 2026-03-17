@@ -303,7 +303,6 @@ def fetch_videos():
 def transcribe():
     data = request.json or {}
     cfg = _get_config(data)
-    audio_data_b64 = data.get("audio_data", "")  # 浏览器端下载的音频 base64
     audio_url = data.get("audio_url", "").strip()
     video_download_url = data.get("video_download_url", "").strip()
     video_url = data.get("video_url", "").strip()
@@ -315,61 +314,38 @@ def transcribe():
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
+    download_url = audio_url or video_download_url or video_url
+    if not download_url:
+        return jsonify({"error": "缺少音频/视频 URL"}), 400
+
     tmp_files = []
 
     try:
-        if audio_data_b64:
-            # --- 模式A：浏览器已下载音频，直接用 base64 数据 ---
-            audio_bytes = base64.b64decode(audio_data_b64)
-            if len(audio_bytes) < 1000:
-                return jsonify({"error": f"音频数据太小({len(audio_bytes)}字节)"}), 400
-            if len(audio_bytes) > 25 * 1024 * 1024:
-                return jsonify({"error": f"音频过大({len(audio_bytes) // 1024 // 1024}MB)，Whisper限制25MB"}), 400
-            suffix = ".mp3"
-            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-            tmp_path = tmp.name
-            tmp.close()
-            tmp_files.append(tmp_path)
-            with open(tmp_path, "wb") as f:
-                f.write(audio_bytes)
-        else:
-            # --- 模式B：服务端下载（备用，可能被403） ---
-            download_url = audio_url or video_download_url or video_url
-            if not download_url:
-                return jsonify({"error": "缺少音频/视频 URL"}), 400
+        suffix = ".mp3" if audio_url else ".mp4"
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        tmp_files.append(tmp_path)
 
-            suffix = ".mp3" if audio_url else ".mp4"
-            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-            tmp_path = tmp.name
-            tmp.close()
-            tmp_files.append(tmp_path)
+        _download_url(download_url, tmp_path, cookie, proxy)
 
-            try:
-                _download_url(download_url, tmp_path, cookie, proxy)
-            except RuntimeError as dl_err:
-                if "403" not in str(dl_err) or not cookie:
-                    raise
-                aweme_id = video_id or _extract_aweme_id(video_url)
-                if not aweme_id:
-                    raise RuntimeError(f"403且无法提取aweme_id(请启用浏览器端下载)")
-                fresh = _refresh_video_urls(aweme_id, cookie)
-                if not fresh or fresh.get("_error"):
-                    raise RuntimeError(f"403且刷新失败(请启用浏览器端下载): {fresh}")
-                fresh_audio = fresh.get("audio_url", "")
-                fresh_video = fresh.get("video_download_url", "")
-                download_url = fresh_audio or fresh_video or download_url
-                suffix = ".mp3" if fresh_audio else ".mp4"
-                new_tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-                tmp_path = new_tmp.name
+        file_size = os.path.getsize(tmp_path)
+        if file_size < 1000:
+            fallback = video_download_url if download_url == audio_url else audio_url
+            if fallback and fallback != download_url:
+                new_suffix = ".mp4" if fallback == video_download_url else ".mp3"
+                new_tmp = tempfile.NamedTemporaryFile(suffix=new_suffix, delete=False)
+                new_tmp_path = new_tmp.name
                 new_tmp.close()
-                tmp_files.append(tmp_path)
-                _download_url(download_url, tmp_path, cookie, proxy)
-
-            file_size = os.path.getsize(tmp_path)
+                tmp_files.append(new_tmp_path)
+                _download_url(fallback, new_tmp_path, cookie, proxy)
+                if os.path.getsize(new_tmp_path) >= 1000:
+                    tmp_path = new_tmp_path
+                    file_size = os.path.getsize(tmp_path)
             if file_size < 1000:
-                return jsonify({"error": f"音频文件太小({file_size}字节)，建议启用浏览器端下载"}), 400
-            if file_size > 25 * 1024 * 1024:
-                return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
+                return jsonify({"error": f"音频文件太小({file_size}字节)，URL可能已过期"}), 400
+        if file_size > 25 * 1024 * 1024:
+            return jsonify({"error": f"文件过大({file_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
 
         # --- 准备Whisper输入文件 ---
         whisper_file = tmp_path

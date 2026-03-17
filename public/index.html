@@ -765,7 +765,6 @@ async function resumeExtraction() {
 
   saveToHistory(STATE._cachedUrl, $('keyword').value.trim(), STATE.creatorName);
 
-  // 直接进入转录阶段
   show('progressCard');
   hide('resultCard');
   hide('chatCard');
@@ -774,6 +773,33 @@ async function resumeExtraction() {
   startTimer();
 
   try {
+    // 检查是否有未转录的视频需要刷新URL
+    const todo = STATE.videos.filter(v => !v.transcript && (v.video_download_url || v.audio_url));
+    if (todo.length > 0 && STATE.secUid) {
+      addTitle(`${todo.length} 个视频待转录，正在刷新下载链接...`, 'active');
+      setStatus('重新扫描获取最新下载链接...', 'info');
+      // 重新扫描获取新URL（音频URL会过期）
+      const kw = $('keyword').value.trim();
+      const freshVideos = await _fetchFreshUrls(STATE.secUid, kw);
+      if (freshVideos.length > 0) {
+        // 用新URL更新未转录视频
+        const urlMap = {};
+        for (const fv of freshVideos) {
+          urlMap[fv.id] = fv;
+        }
+        let refreshed = 0;
+        for (const v of STATE.videos) {
+          if (!v.transcript && urlMap[v.id]) {
+            v.audio_url = urlMap[v.id].audio_url || v.audio_url;
+            v.video_download_url = urlMap[v.id].video_download_url || v.video_download_url;
+            refreshed++;
+          }
+        }
+        addTitle(`已刷新 ${refreshed} 个视频的下载链接`, 'success');
+        // 更新缓存
+        saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, kw);
+      }
+    }
     await doTranscription();
   } catch (e) {
     setStatus(e.message, 'error');
@@ -782,6 +808,48 @@ async function resumeExtraction() {
     $('startBtn').disabled = false;
     $('startBtn').textContent = '开始提取';
   }
+}
+
+// 重新扫描获取最新视频URL
+async function _fetchFreshUrls(secUid, keyword) {
+  return new Promise((resolve) => {
+    const allVideos = [];
+    const body = JSON.stringify({ sec_uid: secUid, keyword: keyword || '' });
+    fetch('/api/fetch-videos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    }).then(resp => {
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let currentEvent = '';
+      function pump() {
+        reader.read().then(({ done, value }) => {
+          if (done) { resolve(allVideos); return; }
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop();
+          for (const block of parts) {
+            const lines = block.split('\n');
+            let evtType = '', evtData = '';
+            for (const l of lines) {
+              if (l.startsWith('event: ')) evtType = l.slice(7);
+              if (l.startsWith('data: ')) evtData = l.slice(6);
+            }
+            if (!evtData) continue;
+            try {
+              const d = JSON.parse(evtData);
+              if (evtType === 'videos' && d.videos) allVideos.push(...d.videos);
+              if (evtType === 'status' && d.msg) setStatus(`刷新链接: ${d.msg}`, 'info');
+            } catch {}
+          }
+          pump();
+        }).catch(() => resolve(allVideos));
+      }
+      pump();
+    }).catch(() => resolve(allVideos));
+  });
 }
 
 // 用户选择「重新搜索」
@@ -896,34 +964,12 @@ async function doTranscription() {
     let success = false;
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
       try {
-        // 浏览器端下载音频，避免 Vercel 服务器被抖音 CDN 封禁
-        const audioUrl = v.audio_url || v.video_download_url;
-        let payload = { video_url: v.url, video_id: v.id };
-        if (audioUrl) {
-          try {
-            addTitle(`下载音频中...`, 'active');
-            const audioBlob = await fetch(audioUrl).then(r => {
-              if (!r.ok) throw new Error(`下载失败: ${r.status}`);
-              return r.blob();
-            });
-            const base64 = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result.split(',')[1]);
-              reader.onerror = reject;
-              reader.readAsDataURL(audioBlob);
-            });
-            payload.audio_data = base64;
-          } catch (dlErr) {
-            // 浏览器下载失败，回退到服务端下载
-            addTitle(`浏览器下载失败(${dlErr.message})，尝试服务端...`, 'info');
-            payload.audio_url = v.audio_url;
-            payload.video_download_url = v.video_download_url;
-          }
-        } else {
-          payload.audio_url = v.audio_url;
-          payload.video_download_url = v.video_download_url;
-        }
-        const res = await api('transcribe', payload);
+        const res = await api('transcribe', {
+          audio_url: v.audio_url,
+          video_download_url: v.video_download_url,
+          video_url: v.url,
+          video_id: v.id,
+        });
         v.transcript = res.transcript;
         saveTranscript(v.id, res.transcript);
         ok++;
