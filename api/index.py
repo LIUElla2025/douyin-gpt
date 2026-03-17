@@ -486,11 +486,9 @@ def _refresh_video_urls(aweme_id: str, cookie: str) -> dict:
 
 def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
                    max_bytes: int = 0):
-    """下载URL到本地文件，使用httpx带重试。
-    StreamReset 时自动降级 HTTP/1.1；max_bytes>0 时截断下载。
+    """下载URL到本地文件。先用 httpx，失败后降级 urllib。
+    max_bytes>0 时用 Range 头限制下载量。
     """
-    import httpx
-
     headers = {
         "User-Agent": _DY_UA,
         "Referer": "https://www.douyin.com/",
@@ -498,41 +496,66 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Accept-Encoding": "identity",
         "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "video",
-        "Sec-Fetch-Mode": "no-cors",
-        "Sec-Fetch-Site": "cross-site",
     }
     if cookie:
         headers["Cookie"] = cookie
-    # 大文件用 Range 头限制下载量，避免下载过大视频
     if max_bytes > 0:
         headers["Range"] = f"bytes=0-{max_bytes - 1}"
 
     last_err = None
-    for attempt in range(3):
-        use_h2 = attempt < 2  # 前2次用 HTTP/2，第3次降级 HTTP/1.1
-        try:
-            with httpx.Client(
-                timeout=90,
-                follow_redirects=True,
-                http2=use_h2,
-                proxy=proxy if proxy else None,
-            ) as client:
-                with client.stream("GET", url, headers=headers) as resp:
-                    # Range 请求返回 206 也算成功
-                    if resp.status_code not in (200, 206):
-                        resp.raise_for_status()
-                    downloaded = 0
-                    with open(dest_path, "wb") as f:
-                        for chunk in resp.iter_bytes(8192):
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            if max_bytes > 0 and downloaded >= max_bytes:
-                                break
+
+    # 方式1: httpx（支持 HTTP/2，更好的 TLS 指纹）
+    try:
+        import httpx
+        for attempt in range(2):
+            try:
+                with httpx.Client(
+                    timeout=90,
+                    follow_redirects=True,
+                    http2=(attempt == 0),
+                    proxy=proxy if proxy else None,
+                ) as client:
+                    with client.stream("GET", url, headers=headers) as resp:
+                        if resp.status_code not in (200, 206):
+                            resp.raise_for_status()
+                        downloaded = 0
+                        with open(dest_path, "wb") as f:
+                            for chunk in resp.iter_bytes(8192):
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                if max_bytes > 0 and downloaded >= max_bytes:
+                                    break
+                if os.path.getsize(dest_path) >= 1000:
+                    return
+            except Exception as e:
+                last_err = e
+                time.sleep(1)
+    except ImportError:
+        pass
+
+    # 方式2: urllib（不同 TLS 指纹，作为降级方案）
+    import ssl
+    try:
+        req = urllib.request.Request(url)
+        for k, v in headers.items():
+            req.add_header(k, v)
+        ctx = ssl.create_default_context()
+        resp = urllib.request.urlopen(req, timeout=90, context=ctx)
+        downloaded = 0
+        with open(dest_path, "wb") as f:
+            while True:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if max_bytes > 0 and downloaded >= max_bytes:
+                    break
+        if os.path.getsize(dest_path) >= 1000:
             return
-        except Exception as e:
-            last_err = e
-            time.sleep(1 + attempt)
+    except Exception as e:
+        last_err = e
+
     raise RuntimeError(f"下载失败(重试3次): {last_err}")
 
 
