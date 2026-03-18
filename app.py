@@ -486,6 +486,13 @@ def _render_chat_tab():
     creator_name = st.session_state.get("current_creator_name", "博主")
     videos = st.session_state["current_transcripts"]
 
+    st.markdown("""
+<style>
+.stChatMessage { max-width: 100% !important; width: 100% !important; }
+.stChatMessage > div { max-width: 100% !important; width: 100% !important; }
+</style>
+""", unsafe_allow_html=True)
+
     st.subheader(f"💬 与「{creator_name}」对话")
     st.caption(f"基于 {sum(1 for v in videos if v.get('transcript'))} 个视频的文字稿，使用 GPT-4.1 模仿博主风格回复")
 
