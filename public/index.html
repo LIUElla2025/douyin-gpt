@@ -604,6 +604,36 @@
     width: 14px;
     height: 14px;
   }
+  .chat-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+  }
+  .btn-copy-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    background: white;
+    border: var(--border-w) solid var(--dark);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    box-shadow: 2px 2px 0 var(--dark);
+    transition: all 0.15s;
+  }
+  .btn-copy-all:hover { background: var(--bg); }
+  .emoji-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+  .emoji-toggle input { cursor: pointer; }
+  .btn-copy-all svg { width: 14px; height: 14px; }
   .chat-input-row {
     display: flex;
     gap: 8px;
@@ -835,6 +865,16 @@
 
   <!-- Chat -->
   <div class="card hidden" id="chatCard">
+    <div class="chat-header">
+      <label class="emoji-toggle">
+        <input type="checkbox" id="emojiToggle" checked>
+        <span>显示 Emoji</span>
+      </label>
+      <button class="btn btn-copy-all" id="copyAllBtn" onclick="copyAllChat()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path></svg>
+        复制全部对话
+      </button>
+    </div>
     <div class="chat-box" id="chatBox">
       <div class="chat-bubble bot" id="chatGreeting">你好！有什么想聊的？</div>
     </div>
@@ -1750,8 +1790,14 @@ function switchCorpusAvatar(corpusId) {
   renderAvatars();
 }
 
+function _stripEmoji(text) {
+  return text.replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{1F300}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{200D}]+/gu, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 function _formatMd(text) {
   // 简易 Markdown → HTML：段落、加粗、列表、分隔线
+  const showEmoji = document.getElementById('emojiToggle') ? document.getElementById('emojiToggle').checked : true;
+  if (!showEmoji) text = _stripEmoji(text);
   let html = esc(text);
   // 加粗 **text**
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -1815,6 +1861,24 @@ function _loadChatHistory() {
     }
     box.scrollTop = box.scrollHeight;
   } catch {}
+}
+
+async function copyAllChat() {
+  const bubbles = $('chatBox').querySelectorAll('.chat-bubble');
+  const lines = [];
+  bubbles.forEach(b => {
+    const role = b.classList.contains('user') ? '我' : '分身';
+    lines.push(`【${role}】\n${b.innerText.replace(/\n复制$/,'').trim()}`);
+  });
+  const text = lines.join('\n\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = $('copyAllBtn');
+    btn.textContent = '✅ 已复制';
+    setTimeout(() => {
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path></svg>复制全部对话';
+    }, 2000);
+  } catch(e) { alert('复制失败，请手动选取'); }
 }
 
 async function sendChat() {
