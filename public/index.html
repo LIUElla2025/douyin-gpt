@@ -1219,31 +1219,12 @@ async function resumeExtraction() {
         }
       }
 
-      // 第2步：通过详情API逐个补全缺URL的视频
-      const noUrl = STATE.videos.filter(v => !v.transcript && !v.video_download_url && !v.audio_url && !v.dash_audio_url);
-      if (noUrl.length > 0) {
-        addTitle(`${noUrl.length} 个视频缺少下载链接，通过详情API逐个获取...`, 'active');
-        setStatus('补全下载链接...', 'info');
-        try {
-          const urlResults = await _refreshUrlsViaDetail(noUrl.map(v => v.id));
-          let filled = 0;
-          for (const v of STATE.videos) {
-            if (urlResults[v.id]) {
-              v.dash_audio_url = urlResults[v.id].dash_audio_url || '';
-              v.audio_url = urlResults[v.id].audio_url || '';
-              v.video_download_url = urlResults[v.id].video_download_url || '';
-              filled++;
-            }
-          }
-          addTitle(`通过详情API补全了 ${filled}/${noUrl.length} 个视频的下载链接`, 'success');
-        } catch (e) {
-          addTitle(`详情API补全失败: ${e.message}`, 'warning');
-        }
-      }
-
       const kw = $('keyword').value.trim();
       saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, kw);
     }
+
+    // 第2步：通过详情API逐个补全缺URL的视频
+    await fillMissingUrls();
     await doTranscription();
   } catch (e) {
     setStatus(e.message, 'error');
@@ -1390,6 +1371,7 @@ async function doFullExtraction(url) {
     }
 
     restoreTranscripts(STATE.videos);
+    await fillMissingUrls();
     await doTranscription();
 
   } catch (e) {
@@ -1398,6 +1380,32 @@ async function doFullExtraction(url) {
   } finally {
     $('startBtn').disabled = false;
     $('startBtn').textContent = '开始提取';
+  }
+}
+
+async function fillMissingUrls() {
+  // 对所有缺URL的未转录视频，通过详情API逐个获取下载链接
+  const noUrl = STATE.videos.filter(v => !v.transcript && !v.dash_audio_url && !v.video_download_url && !v.audio_url);
+  if (noUrl.length > 0 && STATE.secUid) {
+    addTitle(`${noUrl.length} 个视频缺少下载链接，通过详情API逐个获取...`, 'active');
+    setStatus('补全下载链接...', 'info');
+    try {
+      const urlResults = await _refreshUrlsViaDetail(noUrl.map(v => v.id));
+      let filled = 0;
+      for (const v of STATE.videos) {
+        if (urlResults[v.id]) {
+          v.dash_audio_url = urlResults[v.id].dash_audio_url || '';
+          v.audio_url = urlResults[v.id].audio_url || '';
+          v.video_download_url = urlResults[v.id].video_download_url || '';
+          filled++;
+        }
+      }
+      addTitle(`通过详情API补全了 ${filled}/${noUrl.length} 个视频的下载链接`, 'success');
+      const kw = $('keyword').value.trim();
+      saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, kw);
+    } catch (e) {
+      addTitle(`详情API补全失败: ${e.message}`, 'warning');
+    }
   }
 }
 
