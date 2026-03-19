@@ -481,16 +481,17 @@ def transcribe():
         print(f"[transcribe] 文件头: {_hdr.hex()} ({_hdr[:4]})")
         transcript = _call_whisper(whisper_file, openai_key, proxy)
 
-        # --- GPT 后处理加标点 ---
+        # --- GPT 后处理：加标点 + 修错别字 ---
         raw_text = transcript.get("text", "") if isinstance(transcript, dict) else ""
         if raw_text:
             try:
                 polished = _polish_transcript(raw_text, openai_key)
                 if polished:
                     transcript["text"] = polished
+                    transcript["raw_text"] = raw_text  # 保留原始文本用于对比
                     transcript["segments"] = []
             except Exception as polish_err:
-                print(f"[polish] GPT 加标点失败: {polish_err}")
+                print(f"[polish] GPT 校对失败: {polish_err}")
 
         return jsonify({"transcript": transcript})
 
@@ -671,15 +672,16 @@ def _download_url(url: str, dest_path: str, cookie: str = "", proxy: str = "",
     raise RuntimeError(f"下载失败(重试3次): {last_err}")
 
 
-# ─── 文稿加标点 ───
+# ─── 文稿校对（加标点 + 修错别字） ───
 
 
 @app.route("/api/polish", methods=["POST"])
 def polish():
-    """给单个视频文稿添加标点符号"""
+    """给单个视频文稿加标点、修正错别字"""
     data = request.json or {}
     cfg = _get_config(data)
     text = data.get("text", "").strip()
+    force = data.get("force", False)  # 强制校对（即使已有标点）
     openai_key = cfg["openai_api_key"]
 
     if not text:
@@ -687,8 +689,8 @@ def polish():
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
-    # 已有足够标点则跳过
-    if _has_punctuation(text):
+    # 非强制模式下，已有足够标点则跳过
+    if not force and _has_punctuation(text):
         return jsonify({"polished": text, "skipped": True})
 
     try:
@@ -697,7 +699,7 @@ def polish():
             return jsonify({"polished": polished, "skipped": False})
         return jsonify({"polished": text, "skipped": True})
     except Exception as e:
-        return jsonify({"error": f"加标点失败: {e}"}), 500
+        return jsonify({"error": f"校对失败: {e}"}), 500
 
 
 # ─── 生成 Word 文档 ───
@@ -1552,9 +1554,11 @@ def _polish_transcript(raw_text: str, api_key: str) -> str:
                         "你是一个中文文稿整理专家。请将以下语音转录文本整理为标准文稿：\n"
                         "1. 添加正确的中文标点符号（句号、逗号、问号、感叹号、顿号等）\n"
                         "2. 去除口水词（嗯、啊、呃、那个、就是说等）\n"
-                        "3. 不要改变原文的意思和用词\n"
-                        "4. 不要添加任何解释或注释\n"
-                        "5. 直接输出整理后的文稿，不要有任何前缀说明"
+                        "3. 修正语音识别的错别字和同音字错误（如'在坐'→'在座'，'做为'→'作为'，'以经'→'已经'等）\n"
+                        "4. 修正人名、专有名词的常见识别错误\n"
+                        "5. 不要改变原文的意思、语气和表达风格\n"
+                        "6. 不要添加任何解释或注释\n"
+                        "7. 直接输出整理后的文稿，不要有任何前缀说明"
                     ),
                 },
                 {"role": "user", "content": chunk},
