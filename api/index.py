@@ -148,6 +148,7 @@ def fetch_videos():
             # 第二步：逐页获取视频（支持从 start_cursor 续传）
             keywords = keyword.split() if keyword else None
             all_videos = []
+            seen_ids = set()  # 去重：防止重试翻页时添加重复视频
             total_scanned = prev_scanned
             max_cursor = start_cursor
             max_count = len(target_ids) if target_ids else (max_videos if max_videos > 0 else 9999)
@@ -226,6 +227,11 @@ def fetch_videos():
                         "creator_name": creator_name,
                     }
 
+                    # 去重
+                    if video["id"] in seen_ids:
+                        continue
+                    seen_ids.add(video["id"])
+
                     if target_ids:
                         # target_ids 模式：只匹配目标 ID，跳过关键词过滤
                         if video["id"] in target_ids:
@@ -260,17 +266,31 @@ def fetch_videos():
 
                 has_more = page_data.get("has_more", False)
                 max_cursor = page_data.get("max_cursor", 0)
-                if not has_more:
-                    stop_reason = f"API返回has_more=false（已到末页）"
-                    break
-                if not max_cursor:
-                    stop_reason = f"API返回max_cursor=0（无下一页）"
+                if not has_more or not max_cursor:
+                    # 抖音反爬：有时提前返回 has_more=false，但实际还有更多视频
+                    # 如果获取数量远少于总数（不到80%），等待后重试（最多3次，递增等待）
+                    got_count = prev_matched + len(all_videos)
+                    got_ratio = got_count / max(total_videos, 1)
+                    retry_count = getattr(sse_generate, '_retry_count', 0)
+                    if got_ratio < 0.8 and retry_count < 3:
+                        sse_generate._retry_count = retry_count + 1
+                        wait_sec = 5 * (retry_count + 1)  # 5s, 10s, 15s
+                        yield send_event("status", {
+                            "msg": f"抖音API提前截断（已获取 {got_count}/{total_videos}），等待 {wait_sec}s 后第 {retry_count + 1} 次重试...",
+                        })
+                        time.sleep(wait_sec)
+                        # 重试：从头扫描，seen_ids 会自动去重
+                        max_cursor = 0
+                        continue
+                    reason = "API返回has_more=false（已到末页）" if not has_more else "API返回max_cursor=0（无下一页）"
+                    stop_reason = f"{reason}（已获取 {got_count}/{total_videos}）"
                     break
 
-                time.sleep(0.3)
+                # 翻页间隔：随机 1-2 秒，降低被限流风险
+                time.sleep(1 + random.random())
 
-                # 超时保护：250秒后停止，返回游标供前端续传
-                if time.time() - fetch_start > 250:
+                # 超时保护：500秒后停止，返回游标供前端续传
+                if time.time() - fetch_start > 500:
                     stop_reason = "timeout"
                     yield send_event("status", {"msg": f"本轮超时，已扫描 {total_scanned} 个，准备续传..."})
                     break
@@ -1884,6 +1904,29 @@ def _format_ts(seconds: float) -> str:
 # ─── GPT 对话 ───
 
 
+def _is_garbage_transcript(text: str) -> bool:
+    """检测垃圾文稿：背景音乐歌词、水印、广告语等非口播内容"""
+    if not text or len(text.strip()) < 10:
+        return True
+    garbage_phrases = [
+        "YoYo Television Series Exclusive", "优优独播剧场",
+        "请不吝点赞", "订阅、转发、打赏", "点点栏目", "Television Series",
+    ]
+    if sum(1 for p in garbage_phrases if p in text) >= 2:
+        return True
+    clean = text.strip()
+    if len(clean) > 20 and clean.count(clean[:20]) >= 3:
+        return True
+    filtered = text
+    for p in garbage_phrases:
+        filtered = filtered.replace(p, "")
+    filtered_clean = re.sub(r'[\s，。？！、；：,.\?!;:\n]+', '', filtered)
+    original_clean = re.sub(r'[\s，。？！、；：,.\?!;:\n]+', '', text)
+    if original_clean and len(filtered_clean) < len(original_clean) * 0.2:
+        return True
+    return False
+
+
 def _chat_with_creator(
     message: str,
     creator_name: str,
@@ -1892,64 +1935,57 @@ def _chat_with_creator(
     api_key: str,
     proxy: str = "",
 ) -> str:
-    """与博主 GPT 对话（直接 HTTP，不依赖 httpx）"""
+    """与博主 GPT 对话 — 全量文稿直接塞入 1M 上下文"""
 
-    # 构建博主资料
+    # 构建博主全量资料（过滤垃圾文稿）
     profile_parts = []
-    for v in videos_context[:50]:
+    skipped = 0
+    for v in videos_context:
         t = v.get("transcript")
         if t:
             text = t.get("text", "") if isinstance(t, dict) else str(t)
             if text:
+                if _is_garbage_transcript(text):
+                    skipped += 1
+                    continue
                 title = v.get("title", "")
                 profile_parts.append(f"【{title}】\n{text}")
 
     profile = "\n\n---\n\n".join(profile_parts) if profile_parts else "暂无内容"
 
-    # 搜索相关内容
-    query_words = set()
-    phrases = re.split(r"[，。？！、；：\s,.\?!;:\n]+", message)
-    for p in phrases:
-        p = p.strip()
-        if 2 <= len(p) <= 6:
-            query_words.add(p)
-        for n in (2, 3):
-            for i in range(len(p) - n + 1):
-                query_words.add(p[i : i + n])
+    system_prompt = f"""你是抖音博主「{creator_name}」的 AI 分身。你的任务是完全模仿这位博主的思维方式、说话风格、用词习惯和知识领域来回答问题。
 
-    context_parts = []
-    if query_words:
-        scored = []
-        for v in videos_context:
-            t = v.get("transcript")
-            if not t:
-                continue
-            text = t.get("text", "") if isinstance(t, dict) else str(t)
-            score = sum(1 for w in query_words if w in text)
-            if score > 0:
-                scored.append((score, v.get("title", ""), text))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        for _, title, text in scored[:5]:
-            context_parts.append(f"【{title}】\n{text}")
+## 你的身份
+- 你就是「{creator_name}」，用第一人称说话
+- 模仿这位博主的语气、口头禅、表达方式
+- 回答问题时基于博主在视频中表达过的观点和知识
+- 如果被问到博主没有涉及过的话题，用博主的风格说"这个我还真没怎么聊过"之类的话
 
-    context = "\n\n---\n\n".join(context_parts) if context_parts else "（无特别相关内容）"
+## 博主的全部视频内容（用于学习风格和知识）
+以下是博主所有视频的完整文字稿，请充分利用这些内容来理解博主的观点、知识体系和表达方式：
 
-    system_prompt = f"""你是抖音博主「{creator_name}」的 AI 分身。模仿这位博主的思维方式、说话风格来回答。
+{profile}
 
-## 博主视频内容样本
-{profile[:100000]}
+## 注意：文稿噪音过滤
+视频文字稿由语音识别生成，可能混入以下非口播内容，请自动忽略：
+- 背景音乐歌词（如歌曲片段、古诗词朗诵）
+- 视频水印文字（如"优优独播剧场"、"YoYo Television Series Exclusive"）
+- 平台引导语（如"请不吝点赞、订阅、转发、打赏"）
+- 出品方信息（如"由XX剧团出品"）
+- 与视频标题主题明显无关的内容（如视频讲情感但文稿是菜谱）
+只使用博主真正口播的观点和内容来回答。
 
-## 当前对话相关参考
-{context[:30000]}
-
-## 规则
-1. 用第一人称，保持博主风格
-2. 优先用博主表达过的观点
-3. 不说"根据视频"这样的元叙述
-4. 自然口语化"""
+## 行为规则
+1. 始终保持博主的说话风格和语气
+2. 优先使用博主在视频中表达过的观点来回答
+3. 不要说"根据视频内容"或"在某个视频中"这样的元叙述，直接用博主的口吻说
+4. 回答要自然、口语化，像博主在和粉丝聊天
+5. 如果不确定博主的观点，可以用博主的风格表达自己的推测，但要坦诚
+6. 用户之前在对话中提供的背景信息、个人情况等，请始终记住并在后续回答中参考"""
 
     messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(history[-20:])
+    # GPT-4.1 有 1M 上下文，保留最近 100 轮对话历史
+    messages.extend(history[-200:])
     messages.append({"role": "user", "content": message})
 
     # 直接 HTTP 调用 OpenAI Chat API（不依赖 httpx）
