@@ -153,7 +153,8 @@ def fetch_videos():
             max_cursor = start_cursor
             max_count = len(target_ids) if target_ids else (max_videos if max_videos > 0 else 9999)
             page = start_page
-            total_pages = max(1, -(-total_videos // 35))  # ceil division
+            _page_size = 18  # 每页请求量，小count对抖音反爬更友好
+            total_pages = max(1, -(-total_videos // _page_size))  # ceil division
             fetch_start = time.time()
 
             if start_cursor:
@@ -172,7 +173,7 @@ def fetch_videos():
                     "total_pages": total_pages,
                 })
 
-                params = _build_base_params(sec_uid, max_cursor, count=35)
+                params = _build_base_params(sec_uid, max_cursor, count=_page_size)
                 page_data = _douyin_api_request(
                     "https://www.douyin.com/aweme/v1/web/aweme/post/", params, cookie
                 )
@@ -266,9 +267,15 @@ def fetch_videos():
 
                 has_more = page_data.get("has_more", False)
                 max_cursor = page_data.get("max_cursor", 0)
+
+                # 日志：实际每页返回数量
+                yield send_event("status", {
+                    "msg": f"第{page}页返回 {len(aweme_list)} 条，新增 {len(page_videos)} 条（has_more={has_more}, cursor={max_cursor}）",
+                })
+
                 if not has_more or not max_cursor:
                     # 抖音反爬：有时提前返回 has_more=false，但实际还有更多视频
-                    # 如果获取数量远少于总数（不到80%），等待后重试（最多3次，递增等待）
+                    # 如果获取数量远少于总数（不到80%），用更小的 count 重试
                     got_count = prev_matched + len(all_videos)
                     got_ratio = got_count / max(total_videos, 1)
                     retry_count = getattr(sse_generate, '_retry_count', 0)
@@ -286,11 +293,11 @@ def fetch_videos():
                     stop_reason = f"{reason}（已获取 {got_count}/{total_videos}）"
                     break
 
-                # 翻页间隔：随机 1-2 秒，降低被限流风险
-                time.sleep(1 + random.random())
+                # 翻页间隔：随机 1.5-3 秒，降低被限流风险
+                time.sleep(1.5 + random.random() * 1.5)
 
-                # 超时保护：500秒后停止，返回游标供前端续传
-                if time.time() - fetch_start > 500:
+                # 超时保护：600秒后停止，返回游标供前端续传
+                if time.time() - fetch_start > 600:
                     stop_reason = "timeout"
                     yield send_event("status", {"msg": f"本轮超时，已扫描 {total_scanned} 个，准备续传..."})
                     break
