@@ -268,11 +268,6 @@ def fetch_videos():
                 has_more = page_data.get("has_more", False)
                 max_cursor = page_data.get("max_cursor", 0)
 
-                # 日志：实际每页返回数量
-                yield send_event("status", {
-                    "msg": f"第{page}页返回 {len(aweme_list)} 条，新增 {len(page_videos)} 条（has_more={has_more}, cursor={max_cursor}）",
-                })
-
                 if not has_more or not max_cursor:
                     # 抖音反爬：有时提前返回 has_more=false，但实际还有更多视频
                     # 如果获取数量远少于总数（不到80%），用更小的 count 重试
