@@ -1213,8 +1213,8 @@ async function resumeExtraction() {
         for (const v of STATE.videos) {
           if (!v.transcript && urlMap[v.id]) {
             v.dash_audio_url = urlMap[v.id].dash_audio_url || v.dash_audio_url || '';
-            v.audio_url = urlMap[v.id].audio_url || v.audio_url;
-            v.video_download_url = urlMap[v.id].video_download_url || v.video_download_url;
+            v.audio_url = urlMap[v.id].audio_url || v.audio_url || '';
+            v.video_download_url = urlMap[v.id].video_download_url || v.video_download_url || '';
           }
         }
       }
@@ -1444,8 +1444,8 @@ async function doTranscription() {
       try {
         const res = await api('transcribe', {
           dash_audio_url: v.dash_audio_url || '',
-          audio_url: v.audio_url,
-          video_download_url: v.video_download_url,
+          audio_url: v.audio_url || '',
+          video_download_url: v.video_download_url || '',
           video_url: v.url,
         });
         v.transcript = res.transcript;

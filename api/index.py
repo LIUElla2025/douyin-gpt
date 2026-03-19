@@ -1578,13 +1578,21 @@ def _polish_transcript(raw_text: str, api_key: str) -> str:
     if not raw_text or len(raw_text.strip()) < 10:
         return ""
 
-    # 长文本分块处理，每块不超过 2000 字
+    # 长文本分块处理，按句子边界切分，每块不超过 2000 字
     chunks = []
     text = raw_text.strip()
     while len(text) > 2000:
-        chunks.append(text[:2000])
-        text = text[2000:]
-    chunks.append(text)
+        # 在 2000 字内找最后一个句号/问号/感叹号作为切分点
+        cut = 2000
+        for sep in ['。', '！', '？', '；', '\n', '，']:
+            pos = text.rfind(sep, 0, 2000)
+            if pos > 500:  # 至少保留500字
+                cut = pos + 1
+                break
+        chunks.append(text[:cut])
+        text = text[cut:]
+    if text:
+        chunks.append(text)
 
     polished_parts = []
     for chunk in chunks:

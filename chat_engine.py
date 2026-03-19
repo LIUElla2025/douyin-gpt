@@ -3,7 +3,6 @@
 import json
 import re
 import httpx
-from pathlib import Path
 from config import OPENAI_API_KEY, DATA_DIR
 
 _PROXY = "http://127.0.0.1:7890"
@@ -155,7 +154,7 @@ class CreatorChat:
         self.creator_name = creator_name
         self.creator_profile = build_creator_profile(videos)
         self.history: list[dict] = []
-        self._history_path = _HISTORY_DIR / f"{re.sub(r'[^a-zA-Z0-9_\\u4e00-\\u9fff]', '_', creator_name)}.json"
+        self._history_path = _HISTORY_DIR / f"{re.sub('[^a-zA-Z0-9_\u4e00-\u9fff]', '_', creator_name)}.json"
         self._load_history()
 
     def _load_history(self):
@@ -184,7 +183,7 @@ class CreatorChat:
         # 添加用户消息到历史
         self.history.append({"role": "user", "content": user_message})
 
-        # GPT-4.1 有 1M token 上下文，保留最近 100 轮对话
+        # GPT-4.1 有 1M token 上下文，保留最近 200 条消息（约100轮对话）
         recent_history = self.history[-200:]
 
         # 构建消息列表
