@@ -154,6 +154,7 @@ def fetch_videos():
             max_count = len(target_ids) if target_ids else (max_videos if max_videos > 0 else 9999)
             page = start_page
             _page_size = 18  # 每页请求量，小count对抖音反爬更友好
+            _strategy = "2"  # publish_video_strategy_type，重试时切换
             total_pages = max(1, -(-total_videos // _page_size))  # ceil division
             fetch_start = time.time()
 
@@ -173,7 +174,7 @@ def fetch_videos():
                     "total_pages": total_pages,
                 })
 
-                params = _build_base_params(sec_uid, max_cursor, count=_page_size)
+                params = _build_base_params(sec_uid, max_cursor, count=_page_size, strategy_type=_strategy)
                 page_data = _douyin_api_request(
                     "https://www.douyin.com/aweme/v1/web/aweme/post/", params, cookie
                 )
@@ -270,18 +271,19 @@ def fetch_videos():
 
                 if not has_more or not max_cursor:
                     # 抖音反爬：有时提前返回 has_more=false，但实际还有更多视频
-                    # 如果获取数量远少于总数（不到80%），用更小的 count 重试
+                    # 每次重试用不同的 strategy_type，可能获取到不同的视频子集
                     got_count = prev_matched + len(all_videos)
                     got_ratio = got_count / max(total_videos, 1)
                     retry_count = getattr(sse_generate, '_retry_count', 0)
-                    if got_ratio < 0.8 and retry_count < 3:
+                    strategies = ["0", "1", "2"]  # 不同的视频排序/筛选策略
+                    if got_ratio < 0.8 and retry_count < len(strategies):
+                        _strategy = strategies[retry_count]
                         sse_generate._retry_count = retry_count + 1
-                        wait_sec = 5 * (retry_count + 1)  # 5s, 10s, 15s
+                        wait_sec = 8 * (retry_count + 1)  # 8s, 16s, 24s
                         yield send_event("status", {
-                            "msg": f"抖音API提前截断（已获取 {got_count}/{total_videos}），等待 {wait_sec}s 后第 {retry_count + 1} 次重试...",
+                            "msg": f"抖音API提前截断（已获取 {got_count}/{total_videos}），等待 {wait_sec}s 后用策略{_strategy}重试...",
                         })
                         time.sleep(wait_sec)
-                        # 重试：从头扫描，seen_ids 会自动去重
                         max_cursor = 0
                         continue
                     reason = "API返回has_more=false（已到末页）" if not has_more else "API返回max_cursor=0（无下一页）"
@@ -1098,7 +1100,8 @@ def _gen_mstoken() -> str:
     return "".join(random.choices(chars, k=126)) + "=="
 
 
-def _build_base_params(sec_uid: str, max_cursor: int = 0, count: int = 20) -> dict:
+def _build_base_params(sec_uid: str, max_cursor: int = 0, count: int = 20,
+                       strategy_type: str = "2") -> dict:
     """构建抖音 API 请求参数"""
     return {
         "device_platform": "webapp",
@@ -1113,7 +1116,7 @@ def _build_base_params(sec_uid: str, max_cursor: int = 0, count: int = 20) -> di
         "whale_cut_token": "",
         "cut_version": "1",
         "count": str(count),
-        "publish_video_strategy_type": "2",
+        "publish_video_strategy_type": strategy_type,
         "pc_client_type": "1",
         "version_code": "290100",
         "version_name": "29.1.0",
