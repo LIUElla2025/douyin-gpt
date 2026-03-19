@@ -1152,7 +1152,7 @@ async function startExtraction() {
     const cached = loadVideoList(STATE.secUid, kw);
     if (cached && cached.videos.length > 0) {
       const transcribed = restoreTranscripts(cached.videos);
-      const remaining = cached.videos.filter(v => !v.transcript && (v.video_download_url || v.audio_url)).length;
+      const remaining = cached.videos.filter(v => !v.transcript && (v.dash_audio_url || v.video_download_url || v.audio_url)).length;
       const kwInfo = cached.keyword ? `，关键词「${cached.keyword}」` : '';
 
       $('resumeInfo').textContent =
@@ -1202,7 +1202,7 @@ async function resumeExtraction() {
     const todo = STATE.videos.filter(v => !v.transcript);
     if (todo.length > 0 && STATE.secUid) {
       // 第1步：通过列表API批量刷新（已有URL的视频）
-      const withUrl = todo.filter(v => v.video_download_url || v.audio_url);
+      const withUrl = todo.filter(v => v.dash_audio_url || v.video_download_url || v.audio_url);
       if (withUrl.length > 0) {
         addTitle(`刷新 ${withUrl.length} 个视频的下载链接...`, 'active');
         setStatus('刷新下载链接...', 'info');
@@ -1402,7 +1402,7 @@ async function doFullExtraction(url) {
 }
 
 async function doTranscription() {
-  const queue = STATE.videos.filter(v => v.video_download_url || v.audio_url);
+  const queue = STATE.videos.filter(v => v.dash_audio_url || v.video_download_url || v.audio_url);
   if (!queue.length) {
     setStatus('没有可转录的视频', 'warning');
     showResults();
@@ -1478,7 +1478,7 @@ function showResults() {
   show('resultCard');
   const total = STATE.videos.length;
   const done = STATE.videos.filter(v => v.transcript).length;
-  const hasMedia = STATE.videos.filter(v => v.video_download_url || v.audio_url).length;
+  const hasMedia = STATE.videos.filter(v => v.dash_audio_url || v.video_download_url || v.audio_url).length;
 
   $('statsGrid').innerHTML = `
     <div class="stat-card"><div class="stat-num">${total}</div><div class="stat-label">视频</div></div>
@@ -1491,7 +1491,7 @@ function showResults() {
   STATE.videos.forEach(v => {
     const d = document.createElement('div');
     d.className = 'video-item';
-    const canTranscribe = v.video_download_url || v.audio_url;
+    const canTranscribe = v.dash_audio_url || v.video_download_url || v.audio_url;
     const badge = v.transcript
       ? '<span class="badge badge-done">已转录</span>'
       : canTranscribe ? '<span class="badge badge-fail">失败</span>' : '<span class="badge badge-na">无媒体</span>';
