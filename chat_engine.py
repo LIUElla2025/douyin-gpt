@@ -33,36 +33,59 @@ _MAX_PROFILE_CHARS = 500000
 
 
 def _is_garbage_transcript(text: str) -> bool:
-    """检测垃圾文稿：背景音乐歌词、水印、广告语等非口播内容"""
+    """检测垃圾文稿：背景音乐歌词、水印、广告语、重复噪音等非口播内容"""
     if not text or len(text.strip()) < 10:
         return True
 
-    # 已知的水印/广告短语
     garbage_phrases = [
-        "YoYo Television Series Exclusive",
-        "优优独播剧场",
-        "请不吝点赞",
-        "订阅、转发、打赏",
-        "点点栏目",
-        "Television Series",
+        "YoYo Television Series Exclusive", "优优独播剧场",
+        "请不吝点赞", "订阅、转发、打赏", "点点栏目", "Television Series",
     ]
-    garbage_hits = sum(1 for p in garbage_phrases if p in text)
-    if garbage_hits >= 2:
+    if sum(1 for p in garbage_phrases if p in text) >= 2:
         return True
 
-    # 检测高重复率：同一短语重复出现多次（水印特征）
-    # 取前20个字符作为样本短语，看它重复了几次
     clean = text.strip()
-    if len(clean) > 20:
-        sample = clean[:20]
-        if clean.count(sample) >= 3:
-            return True
 
-    # 检测文稿中实质内容太少（去掉常见垃圾短语后几乎没有内容）
+    # 检测高重复率：任意2-6字短语重复超过5次（水印/ASR噪音特征）
+    if len(clean) > 20:
+        if clean.count(clean[:20]) >= 3:
+            return True
+        # 检查任意短语的高频重复（如"王努钦"重复20次）
+        from collections import Counter
+        words = re.findall(r'[\u4e00-\u9fff]{2,6}', clean)
+        if words:
+            freq = Counter(words)
+            most_common_word, most_common_count = freq.most_common(1)[0]
+            if most_common_count >= 5 and (most_common_count * len(most_common_word)) > len(clean) * 0.3:
+                return True
+
+    # 检测歌曲/音乐元数据（作词、作曲、编曲、演唱等）
+    music_keywords = ["作词", "作曲", "编曲", "演唱", "混音", "和声", "制作人", "词曲", "原创"]
+    music_hits = sum(1 for k in music_keywords if k in clean)
+    if music_hits >= 3:
+        return True
+
+    # 检测歌曲名描述（只有一句话提到歌名）
+    if len(clean) < 50 and ("歌词叫做" in clean or "歌曲叫做" in clean or "这首歌" in clean):
+        return True
+
+    # 检测影视剧对白（大量破折号对话）
+    if clean.count("——") >= 4 and len(clean) > 50:
+        return True
+
+    # 检测极短文稿（不足50字的大概率不是有效口述）
+    if len(clean) < 50:
+        return True
+
+    # 检测纯数字/标点内容（ASR把背景音识别成数字序列）
+    non_num = re.sub(r'[\d\s，、,.\n]+', '', clean)
+    if len(non_num) < len(clean) * 0.2:
+        return True
+
+    # 检测内容占比（去掉垃圾短语后实质内容不足20%）
     filtered = text
     for p in garbage_phrases:
         filtered = filtered.replace(p, "")
-    # 去掉标点和空白后，如果剩余内容不足原文的20%，判为垃圾
     filtered_clean = re.sub(r'[\s，。？！、；：,.\?!;:\n]+', '', filtered)
     original_clean = re.sub(r'[\s，。？！、；：,.\?!;:\n]+', '', text)
     if original_clean and len(filtered_clean) < len(original_clean) * 0.2:
