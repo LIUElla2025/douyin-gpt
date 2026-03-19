@@ -1198,29 +1198,50 @@ async function resumeExtraction() {
   startTimer();
 
   try {
-    const todo = STATE.videos.filter(v => !v.transcript && (v.video_download_url || v.audio_url));
+    // 所有未转录的视频都需要获取/刷新下载链接
+    const todo = STATE.videos.filter(v => !v.transcript);
     if (todo.length > 0 && STATE.secUid) {
-      addTitle(`${todo.length} 个视频待转录，正在刷新下载链接...`, 'active');
-      setStatus('刷新下载链接...', 'info');
-      const kw = $('keyword').value.trim();
-      const todoIds = todo.map(v => v.id);
-      const freshVideos = await _fetchFreshUrls(STATE.secUid, kw, todoIds);
-      const urlMap = {};
-      for (const fv of freshVideos) { urlMap[fv.id] = fv; }
-      let refreshed = 0;
-      for (const v of STATE.videos) {
-        if (!v.transcript && urlMap[v.id]) {
-          v.dash_audio_url = urlMap[v.id].dash_audio_url || v.dash_audio_url || '';
-          v.audio_url = urlMap[v.id].audio_url || v.audio_url;
-          v.video_download_url = urlMap[v.id].video_download_url || v.video_download_url;
-          refreshed++;
+      // 第1步：通过列表API批量刷新（已有URL的视频）
+      const withUrl = todo.filter(v => v.video_download_url || v.audio_url);
+      if (withUrl.length > 0) {
+        addTitle(`刷新 ${withUrl.length} 个视频的下载链接...`, 'active');
+        setStatus('刷新下载链接...', 'info');
+        const kw = $('keyword').value.trim();
+        const freshVideos = await _fetchFreshUrls(STATE.secUid, kw, withUrl.map(v => v.id));
+        const urlMap = {};
+        for (const fv of freshVideos) { urlMap[fv.id] = fv; }
+        for (const v of STATE.videos) {
+          if (!v.transcript && urlMap[v.id]) {
+            v.dash_audio_url = urlMap[v.id].dash_audio_url || v.dash_audio_url || '';
+            v.audio_url = urlMap[v.id].audio_url || v.audio_url;
+            v.video_download_url = urlMap[v.id].video_download_url || v.video_download_url;
+          }
         }
       }
-      if (refreshed > 0) {
-        addTitle(`已刷新 ${refreshed}/${todoIds.length} 个视频的下载链接`, 'success');
-      } else {
-        addTitle(`未找到目标视频的新链接，将使用旧链接重试`, 'info');
+
+      // 第2步：通过详情API逐个补全缺URL的视频
+      const noUrl = STATE.videos.filter(v => !v.transcript && !v.video_download_url && !v.audio_url && !v.dash_audio_url);
+      if (noUrl.length > 0) {
+        addTitle(`${noUrl.length} 个视频缺少下载链接，通过详情API逐个获取...`, 'active');
+        setStatus('补全下载链接...', 'info');
+        try {
+          const urlResults = await _refreshUrlsViaDetail(noUrl.map(v => v.id));
+          let filled = 0;
+          for (const v of STATE.videos) {
+            if (urlResults[v.id]) {
+              v.dash_audio_url = urlResults[v.id].dash_audio_url || '';
+              v.audio_url = urlResults[v.id].audio_url || '';
+              v.video_download_url = urlResults[v.id].video_download_url || '';
+              filled++;
+            }
+          }
+          addTitle(`通过详情API补全了 ${filled}/${noUrl.length} 个视频的下载链接`, 'success');
+        } catch (e) {
+          addTitle(`详情API补全失败: ${e.message}`, 'warning');
+        }
       }
+
+      const kw = $('keyword').value.trim();
       saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, kw);
     }
     await doTranscription();
@@ -1275,6 +1296,41 @@ async function _fetchFreshUrls(secUid, keyword, targetIds) {
       }
       pump();
     }).catch(() => resolve(allVideos));
+  });
+}
+
+async function _refreshUrlsViaDetail(videoIds) {
+  return new Promise((resolve, reject) => {
+    const results = {};
+    const body = JSON.stringify({ video_ids: videoIds });
+    fetch('/api/refresh-urls', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    }).then(resp => {
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      function pump() {
+        reader.read().then(({ done, value }) => {
+          if (done) { resolve(results); return; }
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const d = JSON.parse(line.slice(6));
+                if (d.results) Object.assign(results, d.results);
+                if (d.msg) setStatus(d.msg, 'info');
+              } catch {}
+            }
+          }
+          pump();
+        }).catch(() => resolve(results));
+      }
+      pump();
+    }).catch(reject);
   });
 }
 

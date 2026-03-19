@@ -327,6 +327,55 @@ def fetch_videos():
     )
 
 
+# ─── 补全视频下载链接 ───
+
+
+@app.route("/api/refresh-urls", methods=["POST"])
+def refresh_urls():
+    """通过详情API逐个补全缺少音频URL的视频"""
+    data = request.json or {}
+    cfg = _get_config(data)
+    video_ids = data.get("video_ids", [])  # [{id, title}]
+    cookie = cfg["cookie"]
+
+    if not video_ids:
+        return jsonify({"error": "缺少 video_ids"}), 400
+    if not cookie:
+        return jsonify({"error": "请配置抖音 Cookie"}), 400
+
+    def sse_generate():
+        results = {}
+        total = len(video_ids)
+        success = 0
+        for i, vid in enumerate(video_ids):
+            vid_id = vid if isinstance(vid, str) else vid.get("id", "")
+            if not vid_id:
+                continue
+            try:
+                urls = _refresh_video_urls(vid_id, cookie)
+                if urls and not urls.get("_error"):
+                    has_url = bool(urls.get("dash_audio_url") or urls.get("video_download_url") or urls.get("audio_url"))
+                    if has_url:
+                        results[vid_id] = urls
+                        success += 1
+            except Exception:
+                pass
+
+            if (i + 1) % 5 == 0 or i == total - 1:
+                yield f"event: status\ndata: {json.dumps({'msg': f'补全链接 {i+1}/{total}（成功 {success}）', 'done': i+1, 'total': total}, ensure_ascii=False)}\n\n"
+
+            # 间隔避免限流
+            time.sleep(0.5 + random.random() * 0.5)
+
+        yield f"event: done\ndata: {json.dumps({'results': results, 'total': total, 'success': success}, ensure_ascii=False)}\n\n"
+
+    return Response(
+        stream_with_context(sse_generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ─── 转录单个视频 ───
 
 
