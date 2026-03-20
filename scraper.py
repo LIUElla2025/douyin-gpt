@@ -147,6 +147,9 @@ def clear_all_data(douyin_id: str):
     # 清除 Apify 原始数据（如有）
     raw_path = TRANSCRIPTS_DIR / f"{safe_id}_raw_apify.json"
     raw_path.unlink(missing_ok=True)
+    # 清除音频文件目录（防止旧文件被复用）
+    for audio_file in AUDIO_DIR.glob("*.mp3"):
+        audio_file.unlink(missing_ok=True)
     print(f"  已清空「{douyin_id}」的所有缓存数据")
 
 
@@ -507,14 +510,88 @@ def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=
 
 
 def download_video_audio(video: dict, index: int) -> Path | None:
-    """下载视频音频 — 优先用 Apify 返回的直链，fallback 到 yt-dlp"""
+    """下载视频并提取口述音频
+
+    优先级:
+    1. 视频直链 (video_play_url) → ffmpeg 提取音频（最准确，是真正的口述内容）
+    2. yt-dlp 从视频 URL 提取音频
+    3. 音频直链 (audio_url / music_play_url) — 仅作最后备选，可能是背景音乐
+    """
     safe_title = re.sub(r'[^\w\u4e00-\u9fff]', '_', video.get("title", f"video_{index}"))[:50]
     output_path = AUDIO_DIR / f"{index:04d}_{safe_title}.mp3"
 
     if output_path.exists():
         return output_path
 
-    # 方案1: 直接从 musicMeta.playUrl 下载 (最快最稳定)
+    # 方案1: 从视频直链下载视频，ffmpeg 提取音频（最可靠）
+    video_play_url = video.get("video_play_url", "")
+    if video_play_url:
+        temp_video = TEMP_DIR / f"{index:04d}_video.mp4"
+        try:
+            req = urllib.request.Request(video_play_url)
+            req.add_header('User-Agent', 'Mozilla/5.0')
+            req.add_header('Referer', 'https://www.douyin.com/')
+            resp = urllib.request.urlopen(req, timeout=60)
+            with open(temp_video, 'wb') as f:
+                f.write(resp.read())
+
+            if temp_video.stat().st_size > 5000:  # 至少 5KB
+                # ffmpeg 提取音频
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y", "-i", str(temp_video),
+                    "-vn", "-acodec", "libmp3lame", "-q:a", "5",
+                    str(output_path),
+                ]
+                ffmpeg_result = subprocess.run(
+                    ffmpeg_cmd, capture_output=True, text=True, timeout=120,
+                )
+                temp_video.unlink(missing_ok=True)
+
+                if ffmpeg_result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1000:
+                    return output_path
+                else:
+                    output_path.unlink(missing_ok=True)
+            else:
+                temp_video.unlink(missing_ok=True)
+        except FileNotFoundError:
+            # ffmpeg 未安装
+            temp_video.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"  视频直链下载失败 [{index}]: {e}")
+            temp_video.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
+
+    # 方案2: yt-dlp 从视频页面提取音频
+    url = video.get("url") or video.get("share_url") or video.get("video_url")
+    if url:
+        temp_pattern = f"{index:04d}_temp"
+        try:
+            cmd = [
+                "yt-dlp", "-x",
+                "--audio-format", "mp3",
+                "--audio-quality", "5",
+                "-o", str(TEMP_DIR / f"{temp_pattern}.%(ext)s"),
+                "--no-playlist",
+                "--socket-timeout", "30",
+                url,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode == 0:
+                matched = list(TEMP_DIR.glob(f"{temp_pattern}*"))
+                if matched:
+                    matched[0].rename(output_path)
+                    for f in matched[1:]:
+                        f.unlink(missing_ok=True)
+                    return output_path
+        except FileNotFoundError:
+            pass  # yt-dlp not installed
+        except subprocess.TimeoutExpired:
+            for f in TEMP_DIR.glob(f"{temp_pattern}*"):
+                f.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"  yt-dlp 失败 [{index}]: {e}")
+
+    # 方案3: 音频直链（可能是背景音乐，仅作最后备选）
     audio_url = video.get("audio_url", "")
     if audio_url:
         try:
@@ -523,45 +600,13 @@ def download_video_audio(video: dict, index: int) -> Path | None:
             resp = urllib.request.urlopen(req, timeout=30)
             with open(output_path, 'wb') as f:
                 f.write(resp.read())
-            if output_path.stat().st_size > 1000:  # 至少 1KB
+            if output_path.stat().st_size > 1000:
                 return output_path
             else:
                 output_path.unlink(missing_ok=True)
         except Exception as e:
-            print(f"  直链下载失败 [{index}]: {e}")
+            print(f"  音频直链下载失败 [{index}]: {e}")
             output_path.unlink(missing_ok=True)
-
-    # 方案2: yt-dlp fallback
-    url = video.get("share_url") or video.get("url") or video.get("video_url")
-    if not url:
-        return None
-
-    temp_pattern = f"{index:04d}_temp"
-    try:
-        cmd = [
-            "yt-dlp", "-x",
-            "--audio-format", "mp3",
-            "--audio-quality", "5",
-            "-o", str(TEMP_DIR / f"{temp_pattern}.%(ext)s"),
-            "--no-playlist",
-            "--socket-timeout", "30",
-            url,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if result.returncode == 0:
-            matched = list(TEMP_DIR.glob(f"{temp_pattern}*"))
-            if matched:
-                matched[0].rename(output_path)
-                for f in matched[1:]:
-                    f.unlink(missing_ok=True)
-                return output_path
-    except FileNotFoundError:
-        pass  # yt-dlp not installed
-    except subprocess.TimeoutExpired:
-        for f in TEMP_DIR.glob(f"{temp_pattern}*"):
-            f.unlink(missing_ok=True)
-    except Exception as e:
-        print(f"  音频下载失败 [{index}]: {e}")
 
     return None
 
