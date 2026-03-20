@@ -195,9 +195,11 @@ async def fetch_videos(sec_uid: str, cookie: str, max_videos: int = None,
             total_got = len(all_videos)
             resumed_tag = f"(断点+{new_count})" if existing_videos else ""
             print(f"f2_progress: 已获取 {total_got}/{total_videos} 个视频{resumed_tag}", file=sys.stderr)
-            # 最新几个标题
-            for v in page_new[-3:]:
-                print(f"f2_title: {v['title'][:40]}", file=sys.stderr)
+            # 发送本页所有新视频标题（带全局编号）
+            base_idx = total_got - len(page_new)
+            for j, v in enumerate(page_new):
+                idx = base_idx + j + 1
+                print(f"f2_title: {idx}. {v['title'][:60]}", file=sys.stderr)
 
         sys.stderr.flush()
 

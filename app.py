@@ -212,15 +212,18 @@ def _run_extraction(douyin_id: str, max_videos: int = None, keyword: str = "",
             # progress_bar 的 text 参数不支持 HTML，只放纯文本
             progress_bar.progress(min(0.05 + p * 0.15, 0.19), text=progress_text)
             status.info(f"📡 {progress_text}")
-            # 实时滚动显示最新获取的视频标题
+            # 实时滚动显示所有已获取的视频标题（与扫描数同步）
             if len(parts) > 1 and parts[1].strip():
                 title_lines = parts[1].strip().split("\n")
+                count = len(title_lines)
                 titles_html = "<br>".join(title_lines)
                 live_detail.markdown(
-                    f"<div style='background:#f8f9fa;border-left:3px solid #4CAF50;"
+                    f"<div id='title-box' style='background:#f8f9fa;border-left:3px solid #4CAF50;"
                     f"padding:8px 12px;border-radius:4px;font-size:13px;"
-                    f"color:#555;max-height:150px;overflow-y:auto'>"
-                    f"📋 最新视频:<br>{titles_html}</div>",
+                    f"color:#555;max-height:300px;overflow-y:auto'>"
+                    f"📋 已获取 {count} 个视频:<br>{titles_html}</div>"
+                    f"<script>var box=document.getElementById('title-box');"
+                    f"if(box)box.scrollTop=box.scrollHeight;</script>",
                     unsafe_allow_html=True,
                 )
             elif p > 0:

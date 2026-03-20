@@ -199,13 +199,9 @@ def f2_get_creator_videos(douyin_id: str, max_videos: int = None, profile_url: s
                 elif line.startswith("f2_match: "):
                     title = line[len("f2_match: "):]
                     recent_titles.append(f"✅ {title}")
-                    if len(recent_titles) > 10:
-                        recent_titles.pop(0)
                 elif line.startswith("f2_title: "):
                     title = line[len("f2_title: "):]
                     recent_titles.append(f"▸ {title}")
-                    if len(recent_titles) > 8:
-                        recent_titles.pop(0)
                 elif line.startswith("f2_info: "):
                     latest_progress[1] = line[len("f2_info: "):]
                 last_update_time[0] = _time.time()
@@ -241,7 +237,7 @@ def f2_get_creator_videos(douyin_id: str, max_videos: int = None, profile_url: s
 
                 # 标题列表单独用 \n--- 分隔传递，避免混入 progress_bar text
                 if recent_titles:
-                    progress_text += "\n---\n" + "\n".join(recent_titles[-6:])
+                    progress_text += "\n---\n" + "\n".join(recent_titles)
                 progress_callback(latest_progress[0], progress_text)
 
             # 检查进程是否结束
