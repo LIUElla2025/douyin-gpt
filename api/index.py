@@ -23,7 +23,7 @@ import urllib.request
 from datetime import datetime
 from io import BytesIO
 
-from flask import Flask, Response, jsonify, request, send_file
+from flask import Flask, Response, jsonify, request, send_file, stream_with_context
 
 app = Flask(__name__)
 
@@ -155,6 +155,7 @@ def fetch_videos():
             page = start_page
             _page_size = 18  # 每页请求量，小count对抖音反爬更友好
             _strategy = "2"  # publish_video_strategy_type，重试时切换
+            _retry_count = 0  # 局部变量跟踪重试次数
             total_pages = max(1, -(-total_videos // _page_size))  # ceil division
             fetch_start = time.time()
 
@@ -274,12 +275,11 @@ def fetch_videos():
                     # 每次重试用不同的 strategy_type，可能获取到不同的视频子集
                     got_count = prev_matched + len(all_videos)
                     got_ratio = got_count / max(total_videos, 1)
-                    retry_count = getattr(sse_generate, '_retry_count', 0)
                     strategies = ["0", "1", "2"]  # 不同的视频排序/筛选策略
-                    if got_ratio < 0.8 and retry_count < len(strategies):
-                        _strategy = strategies[retry_count]
-                        sse_generate._retry_count = retry_count + 1
-                        wait_sec = 8 * (retry_count + 1)  # 8s, 16s, 24s
+                    if got_ratio < 0.85 and _retry_count < len(strategies):
+                        _strategy = strategies[_retry_count]
+                        _retry_count += 1
+                        wait_sec = 8 * _retry_count  # 8s, 16s, 24s
                         yield send_event("status", {
                             "msg": f"抖音API提前截断（已获取 {got_count}/{total_videos}），等待 {wait_sec}s 后用策略{_strategy}重试...",
                         })

@@ -1289,6 +1289,11 @@ async function _refreshUrlsViaDetail(videoIds) {
       headers: { 'Content-Type': 'application/json' },
       body,
     }).then(resp => {
+      if (!resp.ok) {
+        console.warn('refresh-urls returned', resp.status);
+        resolve(results);
+        return;
+      }
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
@@ -1311,7 +1316,7 @@ async function _refreshUrlsViaDetail(videoIds) {
         }).catch(() => resolve(results));
       }
       pump();
-    }).catch(reject);
+    }).catch(() => resolve(results));
   });
 }
 
