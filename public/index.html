@@ -1356,16 +1356,37 @@ async function doFullExtraction(url) {
 
     setStatus('获取视频列表...', 'info');
     setProgress(8);
-    await fetchVideosSSE(STATE.secUid, $('keyword').value.trim());
+    const kw = $('keyword').value.trim();
+
+    // 先加载之前的缓存（如果有）
+    const prevCache = loadVideoList(STATE.secUid, kw);
+    const prevVideos = prevCache ? prevCache.videos : [];
+
+    await fetchVideosSSE(STATE.secUid, kw);
+
+    // 合并：将之前缓存中有但本次扫描未获取到的视频补回来
+    if (prevVideos.length > 0) {
+      const newIds = new Set(STATE.videos.map(v => v.id));
+      let merged = 0;
+      for (const pv of prevVideos) {
+        if (!newIds.has(pv.id)) {
+          STATE.videos.push(pv);
+          merged++;
+        }
+      }
+      if (merged > 0) {
+        addTitle(`从上次缓存中合并了 ${merged} 个本次未扫到的视频`, 'info');
+      }
+    }
 
     setProgress(20);
     const scannedInfo = STATE._totalScanned ? `（共扫描 ${STATE._totalScanned} 个视频）` : '';
     const stopInfo = STATE._stopReason ? ` [${STATE._stopReason}]` : '';
-    setStatus(`找到 ${STATE.videos.length} 个匹配视频${scannedInfo}${stopInfo}`, 'success');
+    setStatus(`共 ${STATE.videos.length} 个视频${scannedInfo}${stopInfo}`, 'success');
     if (STATE._stopReason) addTitle(`扫描结束原因：${STATE._stopReason}`, 'info');
-    saveToHistory(url, $('keyword').value.trim(), STATE.creatorName);
+    saveToHistory(url, kw, STATE.creatorName);
 
-    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
+    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, kw);
 
     if (!STATE.videos.length) {
       setStatus('未找到匹配的视频', 'warning');
