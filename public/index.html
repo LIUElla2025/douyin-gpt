@@ -1415,6 +1415,7 @@ async function fillMissingUrls() {
 }
 
 async function doTranscription() {
+  const keyword = $('keyword').value.trim();
   const queue = STATE.videos.filter(v => v.dash_audio_url || v.video_download_url || v.audio_url);
   if (!queue.length) {
     setStatus('没有可转录的视频', 'warning');
@@ -1450,7 +1451,6 @@ async function doTranscription() {
   const CONCURRENCY = 5;
   const MAX_RETRIES = 3;
   const MAX_ROUNDS = 3;  // 最多3轮自动重试
-  const keyword = $('keyword').value.trim();  // 缓存关键词，防止中途被改
   let totalOk = cached, totalFail = 0;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
