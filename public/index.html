@@ -1437,7 +1437,7 @@ async function doTranscription() {
     setStatus(`全部完成 — ${cached} 个视频已转录`, 'success');
     stopTimer();
     showResults();
-    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
+    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, keyword);
     return;
   }
 
@@ -1450,6 +1450,7 @@ async function doTranscription() {
   const CONCURRENCY = 5;
   const MAX_RETRIES = 3;
   const MAX_ROUNDS = 3;  // 最多3轮自动重试
+  const keyword = $('keyword').value.trim();  // 缓存关键词，防止中途被改
   let totalOk = cached, totalFail = 0;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -1511,8 +1512,17 @@ async function doTranscription() {
             running--;
             // 每10个视频保存一次进度
             if (completed % 10 === 0) {
-              saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
+              saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, keyword);
             }
+            if (nextIdx >= todo.length && running === 0) {
+              resolveAll();
+            } else {
+              launchNext();
+            }
+          }).catch((err) => {
+            running--;
+            completed++;
+            console.error('转录异常:', err);
             if (nextIdx >= todo.length && running === 0) {
               resolveAll();
             } else {
@@ -1526,8 +1536,8 @@ async function doTranscription() {
     });
 
     totalFail = queue.filter(v => !v.transcript).length;
-    addTitle(`第${round + 1}轮完成：成功 ${roundOk}，失败 ${roundFail}`, roundFail > 0 ? 'warning' : 'success');
-    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
+    addTitle(`第${round + 1}轮完成：成功 ${roundOk}，失败 ${totalFail}`, totalFail > 0 ? 'warning' : 'success');
+    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, keyword);
 
     // 如果没有失败的，不需要下一轮
     if (totalFail === 0) break;
@@ -1538,7 +1548,7 @@ async function doTranscription() {
     }
   }
 
-  saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
+  saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, keyword);
 
   setProgress(100);
   const finalFail = queue.filter(v => !v.transcript).length;

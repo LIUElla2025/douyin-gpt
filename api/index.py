@@ -1855,10 +1855,9 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
 
     doc.add_paragraph()
     total = len(videos)
-    transcribed = sum(1 for v in videos if v.get("transcript"))
     info = doc.add_paragraph()
     info.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = info.add_run(f"共 {total} 个视频 · 已转录 {transcribed} 个")
+    run = info.add_run(f"共 {total} 个视频")
     _set_run_font(run, "微软雅黑", 12)
     run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
 
@@ -1870,35 +1869,31 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
 
     doc.add_page_break()
 
-    # ═══ 目录（可点击跳转）═══
-    toc_heading = doc.add_heading("目 录", level=1)
-    chapter_num = 0
-    for v in videos:
-        if v.get("transcript"):
-            _toc_text = v["transcript"].get("text", "") if isinstance(v["transcript"], dict) else str(v["transcript"])
-            if _is_garbage_transcript(_toc_text):
-                continue
-            chapter_num += 1
-            t = re.sub(r"#\S+", "", v.get("title", f"视频 {chapter_num}")).strip()[:60]
-            bookmark_name = f"chapter_{chapter_num}"
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(2)
-            p.paragraph_format.space_after = Pt(2)
-            _add_hyperlink(p, bookmark_name, f"{chapter_num}. {t}", font_size=12)
-
-    doc.add_page_break()
-
-    # ═══ 正文 ═══
-    chapter_num = 0
+    # 预过滤：统一筛选有效文稿，确保目录和正文完全一致
+    valid_videos = []
     for v in videos:
         transcript = v.get("transcript")
         if not transcript:
             continue
-        # 过滤垃圾文稿（背景音乐、水印、广告语等）
         _text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
         if _is_garbage_transcript(_text):
             continue
-        chapter_num += 1
+        valid_videos.append(v)
+
+    # ═══ 目录（可点击跳转）═══
+    toc_heading = doc.add_heading("目 录", level=1)
+    for idx, v in enumerate(valid_videos, 1):
+        t = re.sub(r"#\S+", "", v.get("title", f"视频 {idx}")).strip()[:60]
+        bookmark_name = f"chapter_{idx}"
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
+        _add_hyperlink(p, bookmark_name, f"{idx}. {t}", font_size=12)
+
+    doc.add_page_break()
+
+    # ═══ 正文 ═══
+    for chapter_num, v in enumerate(valid_videos, 1):
         t = re.sub(r"#\S+", "", v.get("title", f"视频 {chapter_num}")).strip()[:80]
         bookmark_name = f"chapter_{chapter_num}"
 
@@ -2001,10 +1996,12 @@ def _is_garbage_transcript(text: str) -> bool:
         if words:
             from collections import Counter
             freq = Counter(words)
-            most_common_word, most_common_count = freq.most_common(1)[0]
-            # 如果一个词占了全文的30%以上，判为垃圾
-            if most_common_count >= 5 and (most_common_count * len(most_common_word)) > len(clean) * 0.3:
-                return True
+            most_common = freq.most_common(1)
+            if most_common:
+                most_common_word, most_common_count = most_common[0]
+                # 如果一个词占了全文的30%以上，判为垃圾
+                if most_common_count >= 5 and (most_common_count * len(most_common_word)) > len(clean) * 0.3:
+                    return True
 
     # 检测歌曲/音乐元数据（作词、作曲、编曲、演唱等）
     music_keywords = ["作词", "作曲", "编曲", "演唱", "混音", "和声", "制作人", "词曲", "原创"]
