@@ -349,22 +349,32 @@ def refresh_urls():
         results = {}
         total = len(video_ids)
         success = 0
+        last_error = ""
         for i, vid in enumerate(video_ids):
             vid_id = vid if isinstance(vid, str) else vid.get("id", "")
             if not vid_id:
                 continue
             try:
                 urls = _refresh_video_urls(vid_id, cookie)
-                if urls and not urls.get("_error"):
+                if urls and urls.get("_error"):
+                    last_error = urls["_error"]
+                elif urls:
                     has_url = bool(urls.get("dash_audio_url") or urls.get("video_download_url") or urls.get("audio_url"))
                     if has_url:
                         results[vid_id] = urls
                         success += 1
-            except Exception:
-                pass
+                    else:
+                        last_error = "API返回数据中无音频/视频URL"
+                else:
+                    last_error = "API返回空数据"
+            except Exception as e:
+                last_error = str(e)
 
             if (i + 1) % 5 == 0 or i == total - 1:
-                yield f"event: status\ndata: {json.dumps({'msg': f'补全链接 {i+1}/{total}（成功 {success}）', 'done': i+1, 'total': total}, ensure_ascii=False)}\n\n"
+                msg = f'补全链接 {i+1}/{total}（成功 {success}）'
+                if success == 0 and last_error:
+                    msg += f' | 失败原因: {last_error[:80]}'
+                yield f"event: status\ndata: {json.dumps({'msg': msg, 'done': i+1, 'total': total}, ensure_ascii=False)}\n\n"
 
             # 间隔避免限流
             time.sleep(0.5 + random.random() * 0.5)

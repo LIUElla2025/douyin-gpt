@@ -184,22 +184,27 @@ async def fetch_videos(sec_uid: str, cookie: str, max_videos: int = None,
         if page_new:
             _append_checkpoint(checkpoint_path, page_new)
 
-        # 关键词模式：边获取边过滤，实时输出匹配的视频
+        # 先发标题，再发进度 — 确保主线程读到标题和进度同步
         if keywords:
             new_matches = [v for v in page_new if _match_keyword(v, keywords)]
+            # 先发所有匹配标题（带全局编号）
+            match_base = len(matched_videos)
+            for j, v in enumerate(new_matches):
+                idx = match_base + j + 1
+                print(f"f2_title: {idx}. {v['title'][:60]}", file=sys.stderr)
             matched_videos.extend(new_matches)
+            # 再发进度（此时标题已在缓冲区）
             print(f"f2_progress: 已扫描 {scanned}/{total_videos} | 匹配 {len(matched_videos)} 个", file=sys.stderr)
-            for v in new_matches:
-                print(f"f2_match: {v['title'][:50]}", file=sys.stderr)
         else:
             total_got = len(all_videos)
             resumed_tag = f"(断点+{new_count})" if existing_videos else ""
-            print(f"f2_progress: 已获取 {total_got}/{total_videos} 个视频{resumed_tag}", file=sys.stderr)
-            # 发送本页所有新视频标题（带全局编号）
+            # 先发所有新视频标题（带全局编号）
             base_idx = total_got - len(page_new)
             for j, v in enumerate(page_new):
                 idx = base_idx + j + 1
                 print(f"f2_title: {idx}. {v['title'][:60]}", file=sys.stderr)
+            # 再发进度（此时标题已在缓冲区）
+            print(f"f2_progress: 已获取 {total_got}/{total_videos} 个视频{resumed_tag}", file=sys.stderr)
 
         sys.stderr.flush()
 

@@ -196,12 +196,9 @@ def f2_get_creator_videos(douyin_id: str, max_videos: int = None, profile_url: s
                         got, total = int(m.group(1)), int(m.group(2))
                         latest_progress[0] = min(got / max(total, 1), 0.95)
                     latest_progress[1] = msg
-                elif line.startswith("f2_match: "):
-                    title = line[len("f2_match: "):]
-                    recent_titles.append(f"✅ {title}")
                 elif line.startswith("f2_title: "):
                     title = line[len("f2_title: "):]
-                    recent_titles.append(f"▸ {title}")
+                    recent_titles.append(title)
                 elif line.startswith("f2_info: "):
                     latest_progress[1] = line[len("f2_info: "):]
                 last_update_time[0] = _time.time()
