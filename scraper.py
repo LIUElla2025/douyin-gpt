@@ -664,3 +664,80 @@ def save_video_list(videos: list[dict], douyin_id: str) -> Path:
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(videos, f, ensure_ascii=False, indent=2)
     return output_path
+
+
+def fill_missing_audio_urls(videos: list[dict], progress_callback=None) -> int:
+    """用 f2 的详情 API 为缺少 audio_url 的视频补全链接
+
+    Returns:
+        成功补全的数量
+    """
+    missing = [(i, v) for i, v in enumerate(videos) if not v.get("audio_url") and v.get("id")]
+    if not missing:
+        return 0
+
+    cookie = _get_douyin_cookie()
+    if not cookie:
+        print("  未设置 DOUYIN_COOKIE，无法补全音频链接")
+        return 0
+
+    import sys
+
+    # 在子进程中运行 f2 详情 API（避免 Streamlit 事件循环冲突）
+    worker_script = str(Path(__file__).resolve().parent / "f2_detail_worker.py")
+    python_exe = sys.executable
+
+    video_ids = [v.get("id") for _, v in missing]
+    cmd = [python_exe, "-u", worker_script]
+
+    import os
+    env = os.environ.copy()
+    env["DOUYIN_COOKIE"] = cookie
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env=env,
+        )
+        # 通过 stdin 传入视频ID列表
+        input_data = json.dumps(video_ids)
+        stdout, stderr = proc.communicate(input=input_data, timeout=600)
+
+        if stderr:
+            # 打印进度信息
+            for line in stderr.strip().split("\n"):
+                if line.strip():
+                    print(f"  {line}")
+                    if progress_callback and line.startswith("detail_progress:"):
+                        msg = line[len("detail_progress:"):].strip()
+                        import re as _re
+                        m = _re.search(r'(\d+)/(\d+)', msg)
+                        if m:
+                            done, total = int(m.group(1)), int(m.group(2))
+                            progress_callback(done / max(total, 1), msg)
+
+        if proc.returncode != 0:
+            print(f"  f2 详情获取失败 (exit {proc.returncode})")
+            return 0
+
+        if not stdout or not stdout.strip():
+            return 0
+
+        results = json.loads(stdout)  # {aweme_id: audio_url}
+        success = 0
+        for idx, v in missing:
+            vid = v.get("id")
+            if vid in results and results[vid]:
+                videos[idx]["audio_url"] = results[vid]
+                success += 1
+
+        return success
+
+    except Exception as e:
+        print(f"  f2 详情获取异常: {e}")
+        return 0

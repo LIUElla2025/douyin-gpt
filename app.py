@@ -8,7 +8,7 @@ from config import OPENAI_API_KEY, TRANSCRIPTS_DIR
 _FAVICON = Path(__file__).resolve().parent / "favicon.svg"
 from scraper import (
     get_creator_videos, download_all_audios, save_video_list,
-    load_checkpoint_videos, clear_checkpoint,
+    load_checkpoint_videos, clear_checkpoint, fill_missing_audio_urls,
 )
 from transcriber import transcribe_batch, save_transcripts, load_transcripts
 from doc_generator import generate_word_doc
@@ -281,6 +281,23 @@ def _run_extraction(douyin_id: str, max_videos: int = None, keyword: str = "",
                         merged += 1
                 if merged:
                     status.info(f"🔄 从上次结果恢复了 {merged} 条已有转录")
+
+        # ─── 步骤1.8: 用 f2 详情 API 补全缺少 audio_url 的视频 ───
+        missing_audio_count = sum(1 for v in videos if not v.get("audio_url"))
+        if missing_audio_count > 0:
+            status.info(f"🔗 {missing_audio_count} 个视频缺少音频链接，通过 f2 详情API补全...")
+            progress_bar.progress(0.18, text=f"补全音频链接 (0/{missing_audio_count})...")
+
+            def _on_fill_progress(p, msg):
+                progress_bar.progress(min(0.18 + p * 0.02, 0.19), text=msg)
+                status.info(f"🔗 {msg}")
+
+            filled = fill_missing_audio_urls(videos, progress_callback=_on_fill_progress)
+            if filled > 0:
+                status.success(f"✅ 成功补全 {filled}/{missing_audio_count} 个音频链接")
+                save_video_list(videos, douyin_id)
+            else:
+                status.warning(f"⚠️ 补全音频链接失败，{missing_audio_count} 个视频将用标题代替文稿")
 
         # ─── 步骤2: 下载音频 ───
         # 跳过已有转录的视频，只下载需要转录的
