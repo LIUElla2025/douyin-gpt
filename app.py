@@ -310,7 +310,7 @@ def _run_extraction(douyin_id: str, max_videos: int = None, keyword: str = "",
                 status.success(f"✅ 成功补全 {filled}/{missing_url_count} 个下载链接")
                 save_video_list(videos, douyin_id)
             else:
-                status.warning(f"⚠️ 补全下载链接失败，{missing_url_count} 个视频将用标题代替文稿")
+                status.warning(f"⚠️ 补全直链失败（抖音限流），这些视频将通过 yt-dlp 备用方案下载")
 
         # ─── 步骤2: 下载音频 ───
         # 有 video_play_url 或 audio_url 的视频都可以下载
