@@ -1875,6 +1875,9 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
     chapter_num = 0
     for v in videos:
         if v.get("transcript"):
+            _toc_text = v["transcript"].get("text", "") if isinstance(v["transcript"], dict) else str(v["transcript"])
+            if _is_garbage_transcript(_toc_text):
+                continue
             chapter_num += 1
             t = re.sub(r"#\S+", "", v.get("title", f"视频 {chapter_num}")).strip()[:60]
             bookmark_name = f"chapter_{chapter_num}"
@@ -1890,6 +1893,10 @@ def _generate_word_doc(videos: list[dict], creator_name: str) -> bytes:
     for v in videos:
         transcript = v.get("transcript")
         if not transcript:
+            continue
+        # 过滤垃圾文稿（背景音乐、水印、广告语等）
+        _text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
+        if _is_garbage_transcript(_text):
             continue
         chapter_num += 1
         t = re.sub(r"#\S+", "", v.get("title", f"视频 {chapter_num}")).strip()[:80]

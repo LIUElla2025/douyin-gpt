@@ -1425,7 +1425,7 @@ async function doTranscription() {
 
   $('titleScroll').innerHTML = '';
   const cached = queue.filter(v => v.transcript).length;
-  const todo = queue.filter(v => !v.transcript);
+  let todo = queue.filter(v => !v.transcript);
 
   if (cached > 0) {
     addTitle(`从缓存恢复 ${cached} 个已转录视频`, 'success');
@@ -1445,47 +1445,104 @@ async function doTranscription() {
   if (noMedia > 0) {
     addTitle(`${STATE.videos.length} 个视频中，${queue.length} 个有音频链接，${noMedia} 个无法获取音频`, 'info');
   }
-  addTitle(`需要转录 ${todo.length} 个视频（已缓存 ${cached} 个）...`, 'success');
 
-  let ok = cached, fail = 0;
+  // ─── 5路并行转录 + 自动重试 ───
+  const CONCURRENCY = 5;
   const MAX_RETRIES = 3;
-  for (let i = 0; i < todo.length; i++) {
-    const v = todo[i];
-    const pct = 20 + ((cached + i) / queue.length) * 70;
-    setProgress(pct);
-    setStatus(`转录 ${i + 1}/${todo.length}：${v.title.substring(0, 25)}...`, 'info');
-    addTitle(`${i + 1}/${todo.length} 转录中：${v.title.substring(0, 42)}`, 'active');
+  const MAX_ROUNDS = 3;  // 最多3轮自动重试
+  let totalOk = cached, totalFail = 0;
 
-    for (let retry = 0; retry < MAX_RETRIES; retry++) {
-      try {
-        const res = await api('transcribe', {
-          dash_audio_url: v.dash_audio_url || '',
-          audio_url: v.audio_url || '',
-          video_download_url: v.video_download_url || '',
-          video_url: v.url,
-        });
-        v.transcript = res.transcript;
-        saveTranscript(v.id, res.transcript);
-        ok++;
-        addTitle(`${i + 1}/${todo.length} 完成：${v.title.substring(0, 42)}`, 'success');
-        break;
-      } catch (e) {
-        if (retry < MAX_RETRIES - 1) {
-          addTitle(`${i + 1}/${todo.length} 重试(${retry + 1}/${MAX_RETRIES})：${v.title.substring(0, 30)} - ${e.message}`, 'info');
-          await new Promise(r => setTimeout(r, 2000 * (retry + 1)));
-        } else {
-          fail++;
-          v.transcript = null;
-          addTitle(`${i + 1}/${todo.length} 失败：${v.title.substring(0, 35)} - ${e.message}`, 'error');
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    if (round > 0) {
+      // 自动重试：重新收集失败的视频
+      todo = queue.filter(v => !v.transcript);
+      if (todo.length === 0) break;
+      addTitle(`── 第${round + 1}轮自动重试：${todo.length} 个待转录 ──`, 'info');
+      await new Promise(r => setTimeout(r, 3000));  // 等3秒再重试
+    }
+
+    addTitle(`开始转录 ${todo.length} 个视频（${CONCURRENCY}路并行）...`, 'success');
+
+    let completed = 0;
+    let roundOk = 0, roundFail = 0;
+
+    // 并行工作池
+    async function transcribeOne(v, idx) {
+      for (let retry = 0; retry < MAX_RETRIES; retry++) {
+        try {
+          const res = await api('transcribe', {
+            dash_audio_url: v.dash_audio_url || '',
+            audio_url: v.audio_url || '',
+            video_download_url: v.video_download_url || '',
+            video_url: v.url,
+          });
+          v.transcript = res.transcript;
+          saveTranscript(v.id, res.transcript);
+          completed++;
+          roundOk++;
+          totalOk++;
+          const pct = 20 + (totalOk / queue.length) * 70;
+          setProgress(pct);
+          setStatus(`转录 ${completed}/${todo.length}：${v.title.substring(0, 25)}...`, 'info');
+          addTitle(`${completed}/${todo.length} 完成：${v.title.substring(0, 42)}`, 'success');
+          return;
+        } catch (e) {
+          if (retry < MAX_RETRIES - 1) {
+            addTitle(`重试(${retry + 1})：${v.title.substring(0, 30)} - ${e.message}`, 'info');
+            await new Promise(r => setTimeout(r, 2000 * (retry + 1)));
+          } else {
+            completed++;
+            roundFail++;
+            addTitle(`失败：${v.title.substring(0, 35)} - ${e.message}`, 'error');
+          }
         }
       }
+    }
+
+    // 用信号量控制并发数
+    let running = 0;
+    let nextIdx = 0;
+    await new Promise((resolveAll) => {
+      function launchNext() {
+        while (running < CONCURRENCY && nextIdx < todo.length) {
+          const idx = nextIdx++;
+          running++;
+          transcribeOne(todo[idx], idx).then(() => {
+            running--;
+            // 每10个视频保存一次进度
+            if (completed % 10 === 0) {
+              saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
+            }
+            if (nextIdx >= todo.length && running === 0) {
+              resolveAll();
+            } else {
+              launchNext();
+            }
+          });
+        }
+        if (todo.length === 0) resolveAll();
+      }
+      launchNext();
+    });
+
+    totalFail = queue.filter(v => !v.transcript).length;
+    addTitle(`第${round + 1}轮完成：成功 ${roundOk}，失败 ${roundFail}`, roundFail > 0 ? 'warning' : 'success');
+    saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
+
+    // 如果没有失败的，不需要下一轮
+    if (totalFail === 0) break;
+    // 如果这轮一个都没成功，说明问题不是暂时的，不再重试
+    if (roundOk === 0) {
+      addTitle(`本轮无新增成功，停止重试`, 'warning');
+      break;
     }
   }
 
   saveVideoList(STATE.secUid, STATE.videos, STATE.creatorName, $('keyword').value.trim());
 
   setProgress(100);
-  setStatus(`完成 — 成功 ${ok}，失败 ${fail}`, 'success');
+  const finalFail = queue.filter(v => !v.transcript).length;
+  setStatus(`完成 — 成功 ${totalOk}，失败 ${finalFail}，无音频 ${noMedia || 0}`, 'success');
   stopTimer();
   showResults();
 }
