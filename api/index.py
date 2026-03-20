@@ -1016,7 +1016,7 @@ class _XBogus:
         if isinstance(md5_str, str) and len(md5_str) > 32:
             return [ord(c) for c in md5_str]
         array, idx = [], 0
-        while idx < len(md5_str):
+        while idx + 1 < len(md5_str):
             array.append((self.Array[ord(md5_str[idx])] << 4) | self.Array[ord(md5_str[idx + 1])])
             idx += 2
         return array
@@ -1080,7 +1080,7 @@ class _XBogus:
         ).decode("ISO-8859-1")
         xb_ = ""
         idx = 0
-        while idx < len(garbled):
+        while idx + 2 < len(garbled):
             xb_ += self._calc(ord(garbled[idx]), ord(garbled[idx + 1]), ord(garbled[idx + 2]))
             idx += 3
         return f"{url_params}&X-Bogus={xb_}"
