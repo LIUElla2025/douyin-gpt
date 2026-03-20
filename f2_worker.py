@@ -54,6 +54,30 @@ def _append_checkpoint(checkpoint_path: str, videos: list[dict]):
             f.write(json.dumps(v, ensure_ascii=False) + "\n")
 
 
+def _save_cursor(checkpoint_path: str, cursor_value):
+    """保存翻页 cursor，下次从这里继续"""
+    if not checkpoint_path:
+        return
+    cursor_path = checkpoint_path.replace(".jsonl", ".cursor.json")
+    with open(cursor_path, "w") as f:
+        json.dump({"max_cursor": cursor_value}, f)
+
+
+def _load_cursor(checkpoint_path: str):
+    """加载上次保存的翻页 cursor"""
+    if not checkpoint_path:
+        return 0
+    cursor_path = checkpoint_path.replace(".jsonl", ".cursor.json")
+    if not os.path.exists(cursor_path):
+        return 0
+    try:
+        with open(cursor_path, "r") as f:
+            data = json.load(f)
+            return data.get("max_cursor", 0)
+    except Exception:
+        return 0
+
+
 async def fetch_videos(sec_uid: str, cookie: str, max_videos: int = None,
                        keywords: list[str] = None, checkpoint_path: str = None):
     # 把所有日志输出重定向到 stderr，保持 stdout 干净（只输出 JSON）
@@ -97,9 +121,12 @@ async def fetch_videos(sec_uid: str, cookie: str, max_videos: int = None,
     matched_videos = [v for v in existing_videos if keywords and _match_keyword(v, keywords)]
 
     # ─── 直接控制翻页（不依赖 handler 的 generator）───
-    # 这样可以在 API 提前截断时从断点 cursor 重试
     max_target = max_videos or float("inf")
-    max_cursor = 0
+    # 从上次保存的 cursor 继续翻页，而不是每次从 0 开始
+    saved_cursor = _load_cursor(checkpoint_path)
+    max_cursor = saved_cursor
+    if saved_cursor:
+        print(f"f2_info: 从上次 cursor={saved_cursor} 继续翻页", file=sys.stderr)
     page_size = 20
     consecutive_empty = 0
     consecutive_all_dup = 0
@@ -235,31 +262,32 @@ async def fetch_videos(sec_uid: str, cookie: str, max_videos: int = None,
 
         # 翻页：更新 cursor
         if not has_more:
-            # API 说没有更多了
+            # API 说没有更多了 — 保存当前 cursor，下次从这里继续
+            if new_cursor:
+                _save_cursor(checkpoint_path, new_cursor)
             if len(all_videos) < total_videos * 0.8:
-                # 但获取不足 80%，等一会儿从头再扫一遍（可能新的请求会返回不同结果）
-                retry_count += 1
-                if retry_count <= max_retries:
-                    wait = 15 * retry_count
-                    print(f"f2_info: API 说没有更多，但仅 {len(all_videos)}/{total_videos}（{len(all_videos)*100//max(total_videos,1)}%），等 {wait}秒后从头重试...", file=sys.stderr)
-                    sys.stderr.flush()
-                    await asyncio.sleep(wait)
-                    max_cursor = 0
-                    consecutive_empty = 0
-                    consecutive_all_dup = 0
-                    continue
-            print(f"f2_info: 全部视频获取完成", file=sys.stderr)
+                print(f"f2_info: 本轮获取 {len(all_videos)}/{total_videos}（{len(all_videos)*100//max(total_videos,1)}%），cursor 已保存，下次继续", file=sys.stderr)
+            else:
+                print(f"f2_info: 全部视频获取完成", file=sys.stderr)
             break
 
         if new_cursor and new_cursor != max_cursor:
             max_cursor = new_cursor
+            # 每页都保存 cursor，即使中途中断也能恢复
+            _save_cursor(checkpoint_path, new_cursor)
         else:
-            # cursor 没变化，可能 API 出问题
+            # cursor 没变化，保存并停止
+            _save_cursor(checkpoint_path, max_cursor)
             print(f"f2_debug: cursor 未变化 ({max_cursor})，停止", file=sys.stderr)
             break
 
-        # 翻页间隔（8秒，降低风控）
-        await asyncio.sleep(8)
+        # 翻页间隔（10秒，降低风控）
+        await asyncio.sleep(10)
+
+    # 如果已经获取到足够多，或已到末尾，重置 cursor 让下次从头扫
+    if len(all_videos) >= total_videos * 0.95:
+        _save_cursor(checkpoint_path, 0)
+        print(f"f2_info: 已获取 95%+ 视频，cursor 重置", file=sys.stderr)
 
     # 返回结果
     result = matched_videos if keywords else all_videos

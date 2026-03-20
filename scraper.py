@@ -137,8 +137,10 @@ def clear_all_data(douyin_id: str):
     """彻底清空该博主的所有缓存数据（重新下载时调用）"""
     from config import DATA_DIR
     safe_id = sanitize_id(douyin_id)
-    # 清除 checkpoint
+    # 清除 checkpoint + cursor
     clear_checkpoint(douyin_id)
+    cursor_path = Path(_get_checkpoint_path(douyin_id).replace(".jsonl", ".cursor.json"))
+    cursor_path.unlink(missing_ok=True)
     # 清除视频列表 JSON
     videos_path = TRANSCRIPTS_DIR / f"{safe_id}_videos.json"
     videos_path.unlink(missing_ok=True)
