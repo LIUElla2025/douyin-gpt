@@ -3,12 +3,13 @@
 import streamlit as st
 from pathlib import Path
 
-from config import OPENAI_API_KEY, TRANSCRIPTS_DIR
+from config import OPENAI_API_KEY, TRANSCRIPTS_DIR, sanitize_id
 
 _FAVICON = Path(__file__).resolve().parent / "favicon.svg"
 from scraper import (
     get_creator_videos, download_all_audios, save_video_list,
-    load_checkpoint_videos, clear_checkpoint, fill_missing_audio_urls,
+    load_checkpoint_videos, clear_checkpoint, clear_all_data,
+    fill_missing_audio_urls,
 )
 from transcriber import transcribe_batch, save_transcripts, load_transcripts
 from doc_generator import generate_word_doc
@@ -142,9 +143,20 @@ def _render_extraction_tab():
             )
 
     if start_fresh or resume:
-        # "开始提取"时清除旧的 checkpoint，从头来
+        # "开始提取"时彻底清空旧数据，真正从头来
         if start_fresh and not resume:
-            clear_checkpoint(douyin_id)
+            clear_all_data(douyin_id)
+            # 清除 session state 中的旧数据
+            for key in ["current_transcripts", "current_creator_id",
+                        "current_creator_name", "doc_path"]:
+                st.session_state.pop(key, None)
+            # 清除该博主的对话引擎和历史
+            creator_id_val = sanitize_id(douyin_id)
+            for k in list(st.session_state.keys()):
+                if k.startswith(f"chat_engine_{creator_id_val}") or \
+                   k.startswith(f"chat_messages_{creator_id_val}") or \
+                   k.startswith(f"uploaded_docs_{creator_id_val}"):
+                    del st.session_state[k]
         st.session_state["_extraction_running"] = True
         try:
             _run_extraction(douyin_id, max_videos, keyword, resume=resume)

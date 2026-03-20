@@ -133,6 +133,23 @@ def clear_checkpoint(douyin_id: str):
     cp_path.unlink(missing_ok=True)
 
 
+def clear_all_data(douyin_id: str):
+    """彻底清空该博主的所有缓存数据（重新下载时调用）"""
+    safe_id = sanitize_id(douyin_id)
+    # 清除 checkpoint
+    clear_checkpoint(douyin_id)
+    # 清除视频列表 JSON
+    videos_path = TRANSCRIPTS_DIR / f"{safe_id}_videos.json"
+    videos_path.unlink(missing_ok=True)
+    # 清除转录结果 JSON
+    transcripts_path = TRANSCRIPTS_DIR / f"{safe_id}_transcripts.json"
+    transcripts_path.unlink(missing_ok=True)
+    # 清除 Apify 原始数据（如有）
+    raw_path = TRANSCRIPTS_DIR / f"{safe_id}_raw_apify.json"
+    raw_path.unlink(missing_ok=True)
+    print(f"  已清空「{douyin_id}」的所有缓存数据")
+
+
 def f2_get_creator_videos(douyin_id: str, max_videos: int = None, profile_url: str = None,
                           progress_callback=None, keyword: str = "") -> list[dict]:
     """通过 f2 框架获取博主视频列表 — 支持关键词边获取边过滤 + 断点续传"""
