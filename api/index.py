@@ -350,6 +350,46 @@ def refresh_urls():
         total = len(video_ids)
         success = 0
         last_error = ""
+
+        # 尝试用 f2 补全（本地环境有 f2 时生效）
+        try:
+            import subprocess, sys
+            worker_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "f2_detail_worker.py")
+            if os.path.exists(worker_script):
+                vid_list = [vid if isinstance(vid, str) else vid.get("id", "") for vid in video_ids]
+                vid_list = [v for v in vid_list if v]
+                env = os.environ.copy()
+                env["DOUYIN_COOKIE"] = cookie
+                proc = subprocess.Popen(
+                    [sys.executable, "-u", worker_script],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, env=env,
+                )
+                stdout, stderr = proc.communicate(input=json.dumps(vid_list), timeout=600)
+
+                # 转发进度到 SSE
+                if stderr:
+                    for line in stderr.strip().split("\n"):
+                        if line.startswith("detail_progress:"):
+                            msg = line[len("detail_progress:"):].strip()
+                            yield f"event: status\ndata: {json.dumps({'msg': msg}, ensure_ascii=False)}\n\n"
+
+                if proc.returncode == 0 and stdout and stdout.strip():
+                    f2_results = json.loads(stdout)
+                    for vid_id, info in f2_results.items():
+                        if isinstance(info, dict):
+                            results[vid_id] = {
+                                "video_download_url": info.get("video_play_url", ""),
+                                "audio_url": info.get("audio_url", ""),
+                                "dash_audio_url": "",
+                            }
+                            success += 1
+                    yield f"event: done\ndata: {json.dumps({'results': results, 'total': total, 'success': success}, ensure_ascii=False)}\n\n"
+                    return
+        except Exception as e:
+            last_error = f"f2方案失败: {e}"
+
+        # f2 不可用时，降级到 XBogus（可能失败）
         for i, vid in enumerate(video_ids):
             vid_id = vid if isinstance(vid, str) else vid.get("id", "")
             if not vid_id:
