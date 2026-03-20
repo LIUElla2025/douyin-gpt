@@ -248,7 +248,7 @@ def transcribe_batch(
         futures = {executor.submit(_worker, item): item for item in to_transcribe}
 
         for future in as_completed(futures):
-            idx, video = futures[future]
+            original_idx, video = futures[future]
             done += 1
 
             try:
@@ -258,7 +258,7 @@ def transcribe_batch(
             except Exception as e:
                 title = video.get("title", "")[:30]
                 print(f"  转录失败 [{done}/{total}]: {title} - {type(e).__name__}: {e}")
-                videos[idx]["transcript"] = None
+                videos[original_idx]["transcript"] = None
                 failed += 1
 
             if progress_callback:
@@ -290,7 +290,9 @@ def save_transcripts(videos: list[dict], douyin_id: str) -> Path:
             "duration": v.get("duration"),
             "digg_count": v.get("digg_count"),
             "url": v.get("url"),
-            "audio_path": v.get("audio_path"),
+            "video_play_url": v.get("video_play_url"),
+            "audio_url": v.get("audio_url"),
+            # 不保存 audio_path — 临时文件，转录后删除
             "transcript": v.get("transcript"),
         })
 

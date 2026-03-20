@@ -1,8 +1,8 @@
-"""用 f2 的详情 API 获取视频的音频 URL
+"""用 f2 的详情 API 获取视频的播放直链（用于提取口述音频）
 
 用法: echo '["id1","id2"]' | python f2_detail_worker.py
      cookie 通过环境变量 DOUYIN_COOKIE 传入
-输出: JSON {aweme_id: audio_url} 到 stdout
+输出: JSON {aweme_id: {video_play_url: "...", audio_url: "..."}} 到 stdout
      进度到 stderr
 """
 
@@ -13,7 +13,7 @@ import os
 import sys
 
 
-async def fetch_audio_urls(video_ids: list[str], cookie: str) -> dict[str, str]:
+async def fetch_video_urls(video_ids: list[str], cookie: str) -> dict:
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
     logging.getLogger("f2").setLevel(logging.WARNING)
     os.environ.setdefault("F2_BARK_KEY", "")
@@ -42,9 +42,22 @@ async def fetch_audio_urls(video_ids: list[str], cookie: str) -> dict[str, str]:
                 response = await crawler.fetch_post_detail(params)
                 detail = PostDetailFilter(response)
 
+                # 优先获取视频播放直链（包含真正的口述音频）
+                video_play_url = ""
+                play_addr = detail.video_play_addr
+                if isinstance(play_addr, list) and play_addr:
+                    video_play_url = play_addr[0]
+                elif isinstance(play_addr, str) and play_addr:
+                    video_play_url = play_addr
+
+                # 背景音乐链接（仅作备选）
                 audio_url = detail.music_play_url or ""
-                if audio_url:
-                    results[vid] = audio_url
+
+                if video_play_url or audio_url:
+                    results[vid] = {
+                        "video_play_url": video_play_url,
+                        "audio_url": audio_url,
+                    }
                     success += 1
         except Exception as e:
             print(f"detail_error: {vid} - {e}", file=sys.stderr)
@@ -75,7 +88,7 @@ def main():
     real_stdout = sys.stdout
     sys.stdout = sys.stderr
     try:
-        results = asyncio.run(fetch_audio_urls(video_ids, cookie))
+        results = asyncio.run(fetch_video_urls(video_ids, cookie))
     finally:
         sys.stdout = real_stdout
 

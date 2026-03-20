@@ -135,6 +135,7 @@ def clear_checkpoint(douyin_id: str):
 
 def clear_all_data(douyin_id: str):
     """彻底清空该博主的所有缓存数据（重新下载时调用）"""
+    from config import DATA_DIR
     safe_id = sanitize_id(douyin_id)
     # 清除 checkpoint
     clear_checkpoint(douyin_id)
@@ -150,6 +151,19 @@ def clear_all_data(douyin_id: str):
     # 清除音频文件目录（防止旧文件被复用）
     for audio_file in AUDIO_DIR.glob("*.mp3"):
         audio_file.unlink(missing_ok=True)
+    # 清除临时视频文件
+    for tmp_file in TEMP_DIR.glob("*"):
+        if tmp_file.name != ".DS_Store":
+            tmp_file.unlink(missing_ok=True)
+    # 清除对话历史
+    history_dir = DATA_DIR / "chat_history"
+    if history_dir.exists():
+        for f in history_dir.glob("*.json"):
+            f.unlink(missing_ok=True)
+    # 清除输出的 Word 文档
+    from config import OUTPUT_DIR
+    for doc_file in OUTPUT_DIR.glob("*.docx"):
+        doc_file.unlink(missing_ok=True)
     print(f"  已清空「{douyin_id}」的所有缓存数据")
 
 
@@ -729,12 +743,16 @@ def save_video_list(videos: list[dict], douyin_id: str) -> Path:
 
 
 def fill_missing_audio_urls(videos: list[dict], progress_callback=None) -> int:
-    """用 f2 的详情 API 为缺少 audio_url 的视频补全链接
+    """用 f2 的详情 API 为缺少 video_play_url 的视频补全下载链接
+
+    优先补全 video_play_url（视频直链，含口述音频），
+    同时也补全 audio_url 作为备选。
 
     Returns:
         成功补全的数量
     """
-    missing = [(i, v) for i, v in enumerate(videos) if not v.get("audio_url") and v.get("id")]
+    missing = [(i, v) for i, v in enumerate(videos)
+               if not v.get("video_play_url") and v.get("id")]
     if not missing:
         return 0
 
@@ -790,13 +808,23 @@ def fill_missing_audio_urls(videos: list[dict], progress_callback=None) -> int:
         if not stdout or not stdout.strip():
             return 0
 
-        results = json.loads(stdout)  # {aweme_id: audio_url}
+        results = json.loads(stdout)  # {aweme_id: {video_play_url, audio_url}}
         success = 0
         for idx, v in missing:
             vid = v.get("id")
             if vid in results and results[vid]:
-                videos[idx]["audio_url"] = results[vid]
-                success += 1
+                info = results[vid]
+                if isinstance(info, dict):
+                    if info.get("video_play_url"):
+                        videos[idx]["video_play_url"] = info["video_play_url"]
+                    if info.get("audio_url"):
+                        videos[idx]["audio_url"] = info["audio_url"]
+                    if info.get("video_play_url") or info.get("audio_url"):
+                        success += 1
+                elif isinstance(info, str) and info:
+                    # 兼容旧格式
+                    videos[idx]["audio_url"] = info
+                    success += 1
 
         return success
 
