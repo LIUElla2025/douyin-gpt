@@ -541,6 +541,9 @@ def download_video_audio(video: dict, index: int) -> Path | None:
 
     # 方案1: 从视频直链下载视频，ffmpeg 提取音频（最可靠）
     video_play_url = video.get("video_play_url", "")
+    # video_play_url 可能是 list（f2 返回的 url_list），取第一个
+    if isinstance(video_play_url, list):
+        video_play_url = video_play_url[0] if video_play_url else ""
     if video_play_url:
         temp_video = TEMP_DIR / f"{index:04d}_video.mp4"
         try:
@@ -609,6 +612,8 @@ def download_video_audio(video: dict, index: int) -> Path | None:
 
     # 方案3: 音频直链（可能是背景音乐，仅作最后备选）
     audio_url = video.get("audio_url", "")
+    if isinstance(audio_url, list):
+        audio_url = audio_url[0] if audio_url else ""
     if audio_url:
         try:
             req = urllib.request.Request(audio_url)
