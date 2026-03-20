@@ -47,13 +47,16 @@ async def fetch_video_urls(video_ids: list[str], cookie: str) -> dict:
                     # 优先获取视频播放直链（包含真正的口述音频）
                     video_play_url = ""
                     play_addr = detail.video_play_addr
-                    if isinstance(play_addr, list) and play_addr:
-                        video_play_url = play_addr[0]
-                    elif isinstance(play_addr, str) and play_addr:
+                    # play_addr 可能是嵌套 list，逐层解包到字符串
+                    while isinstance(play_addr, list) and play_addr:
+                        play_addr = play_addr[0]
+                    if isinstance(play_addr, str) and play_addr:
                         video_play_url = play_addr
 
                     # 背景音乐链接（仅作备选）
                     audio_url = detail.music_play_url or ""
+                    if isinstance(audio_url, list):
+                        audio_url = audio_url[0] if audio_url else ""
 
                     if video_play_url or audio_url:
                         results[vid] = {

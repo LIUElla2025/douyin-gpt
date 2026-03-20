@@ -213,6 +213,15 @@ async def fetch_videos(sec_uid: str, cookie: str, max_videos: int = None,
             if isinstance(duration, (int, float)) and duration > 10000:
                 duration = duration // 1000
 
+            # 提取 URL — f2 返回的 url 字段可能是 list，需要取第一个
+            raw_audio_url = _safe_get(music_urls, i, "")
+            if isinstance(raw_audio_url, list):
+                raw_audio_url = raw_audio_url[0] if raw_audio_url else ""
+
+            raw_video_url = _safe_get(play_addrs, i, "")
+            if isinstance(raw_video_url, list):
+                raw_video_url = raw_video_url[0] if raw_video_url else ""
+
             video = {
                 "id": vid_str,
                 "title": title,
@@ -223,8 +232,8 @@ async def fetch_videos(sec_uid: str, cookie: str, max_videos: int = None,
                 "duration": duration,
                 "digg_count": 0,
                 "author": _safe_get(nicknames, i, creator_name),
-                "audio_url": _safe_get(music_urls, i, ""),
-                "video_play_url": _safe_get(play_addrs, i, ""),
+                "audio_url": raw_audio_url,
+                "video_play_url": raw_video_url,
                 "creator_name": creator_name,
             }
             page_new.append(video)
