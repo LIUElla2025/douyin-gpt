@@ -94,8 +94,13 @@ def _is_garbage_transcript(text: str) -> bool:
     return False
 
 
-def build_creator_profile(videos: list[dict]) -> str:
-    """从文字稿中构建博主内容样本，控制总长度（自动过滤垃圾文稿）"""
+def build_creator_profile(videos: list[dict], extra_docs: list[dict] = None) -> str:
+    """从文字稿中构建博主内容样本，控制总长度（自动过滤垃圾文稿）
+
+    Args:
+        videos: 视频列表
+        extra_docs: 额外上传的文档列表，每项 {"name": "文件名", "text": "内容"}
+    """
     all_texts = []
     skipped = 0
     for v in videos:
@@ -110,6 +115,11 @@ def build_creator_profile(videos: list[dict]) -> str:
                 all_texts.append(f"【{title}】\n{text}")
     if skipped:
         print(f"  已过滤 {skipped} 条垃圾文稿（背景音乐/水印/广告）")
+
+    # 追加用户上传的补充文档
+    if extra_docs:
+        for doc in extra_docs:
+            all_texts.append(f"【补充文档: {doc['name']}】\n{doc['text']}")
 
     if not all_texts:
         return "该博主暂无可用的文字稿内容。"
@@ -139,8 +149,8 @@ def build_system_prompt(creator_name: str, creator_profile: str) -> str:
 - 回答问题时基于博主在视频中表达过的观点和知识
 - 如果被问到博主没有涉及过的话题，用博主的风格说"这个我还真没怎么聊过"之类的话
 
-## 博主的全部视频内容（用于学习风格和知识）
-以下是博主所有视频的完整文字稿，请充分利用这些内容来理解博主的观点、知识体系和表达方式：
+## 博主的全部内容（用于学习风格和知识）
+以下是博主所有视频的完整文字稿以及用户上传的补充文档，请充分利用这些内容来理解博主的观点、知识体系和表达方式：
 
 {creator_profile}
 
@@ -165,7 +175,7 @@ def build_system_prompt(creator_name: str, creator_profile: str) -> str:
 class CreatorChat:
     """博主 GPT 对话管理器 — 使用 OpenAI GPT-4.1（1M 上下文）"""
 
-    def __init__(self, creator_name: str, videos: list[dict]):
+    def __init__(self, creator_name: str, videos: list[dict], extra_docs: list[dict] = None):
         if not OPENAI_API_KEY:
             raise ValueError("请设置 OPENAI_API_KEY 环境变量")
 
@@ -175,7 +185,7 @@ class CreatorChat:
             http_client=httpx.Client(proxy=_PROXY, timeout=120),
         )
         self.creator_name = creator_name
-        self.creator_profile = build_creator_profile(videos)
+        self.creator_profile = build_creator_profile(videos, extra_docs=extra_docs)
         self.history: list[dict] = []
         self._history_path = _HISTORY_DIR / f"{re.sub('[^a-zA-Z0-9_\u4e00-\u9fff]', '_', creator_name)}.json"
         self._load_history()

@@ -458,6 +458,16 @@ def _show_results():
                     type="primary",
                 )
 
+    # 视频标题列表（带编号）
+    with st.expander(f"📋 视频列表（{len(videos)} 个）", expanded=True):
+        title_lines = []
+        for i, v in enumerate(videos, 1):
+            title = v.get("title", "无标题")[:80]
+            has_transcript = bool(v.get("transcript"))
+            icon = "✅" if has_transcript else "⬜"
+            title_lines.append(f"{i}. {icon} {title}")
+        st.markdown("\n".join(title_lines))
+
     # 文字稿预览
     with st.expander("📜 文字稿预览", expanded=False):
         for i, v in enumerate(transcribed[:20]):
@@ -496,13 +506,63 @@ def _render_chat_tab():
     st.subheader(f"💬 与「{creator_name}」对话")
     st.caption(f"基于 {sum(1 for v in videos if v.get('transcript'))} 个视频的文字稿，使用 GPT-4.1 模仿博主风格回复")
 
+    # 上传文档作为额外语料
+    uploaded_docs_key = f"uploaded_docs_{creator_id}"
+    uploaded_files = st.file_uploader(
+        "📎 上传补充文档（可选，与视频文稿一起作为语料库）",
+        type=["txt", "md", "pdf", "docx"],
+        accept_multiple_files=True,
+        key=f"doc_uploader_{creator_id}",
+        help="支持 TXT、Markdown、PDF、Word 文档，上传后会与视频文稿合并作为分身的知识库",
+    )
+
+    # 处理上传的文档
+    if uploaded_files:
+        new_docs = []
+        for uf in uploaded_files:
+            doc_text = ""
+            if uf.name.endswith((".txt", ".md")):
+                doc_text = uf.read().decode("utf-8", errors="ignore")
+            elif uf.name.endswith(".docx"):
+                try:
+                    from docx import Document as DocxDocument
+                    doc = DocxDocument(uf)
+                    doc_text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                except Exception as e:
+                    st.warning(f"⚠️ 读取 {uf.name} 失败: {e}")
+                    continue
+            elif uf.name.endswith(".pdf"):
+                try:
+                    import fitz  # PyMuPDF
+                    pdf_bytes = uf.read()
+                    pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                    doc_text = "\n".join(page.get_text() for page in pdf_doc)
+                    pdf_doc.close()
+                except Exception as e:
+                    st.warning(f"⚠️ 读取 {uf.name} 失败: {e}")
+                    continue
+            if doc_text.strip():
+                new_docs.append({"name": uf.name, "text": doc_text})
+
+        # 如果文档有变化，更新语料库并重建对话引擎
+        old_doc_names = [d["name"] for d in st.session_state.get(uploaded_docs_key, [])]
+        new_doc_names = [d["name"] for d in new_docs]
+        if new_doc_names != old_doc_names:
+            st.session_state[uploaded_docs_key] = new_docs
+            # 强制重建对话引擎以包含新文档
+            engine_key_val = f"chat_engine_{creator_id}"
+            if engine_key_val in st.session_state:
+                del st.session_state[engine_key_val]
+            st.success(f"✅ 已加载 {len(new_docs)} 个补充文档到语料库")
+
     # 对话引擎和消息都按博主 ID 隔离
     engine_key = f"chat_engine_{creator_id}"
     messages_key = f"chat_messages_{creator_id}"
 
     if engine_key not in st.session_state:
         try:
-            st.session_state[engine_key] = CreatorChat(creator_name, videos)
+            extra_docs = st.session_state.get(uploaded_docs_key, [])
+            st.session_state[engine_key] = CreatorChat(creator_name, videos, extra_docs=extra_docs)
         except ValueError as e:
             st.error(str(e))
             return

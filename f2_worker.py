@@ -57,9 +57,9 @@ def _append_checkpoint(checkpoint_path: str, videos: list[dict]):
 async def fetch_videos(sec_uid: str, cookie: str, max_videos: int = None,
                        keywords: list[str] = None, checkpoint_path: str = None):
     # 把所有日志输出重定向到 stderr，保持 stdout 干净（只输出 JSON）
-    logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
-    logging.getLogger("f2").setLevel(logging.WARNING)
-    logging.getLogger().setLevel(logging.WARNING)
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    logging.getLogger("f2").setLevel(logging.INFO)
+    logging.getLogger().setLevel(logging.INFO)
     os.environ.setdefault("F2_BARK_KEY", "")
 
     from f2.apps.douyin.handler import DouyinHandler
@@ -94,14 +94,28 @@ async def fetch_videos(sec_uid: str, cookie: str, max_videos: int = None,
     scanned = 0
     new_count = 0
     duplicate_streak = 0  # 连续重复计数，用于判断是否已到达断点位置
+    empty_page_count = 0  # 连续空页计数
 
     async for page_filter in handler.fetch_user_post_videos(
         sec_user_id=sec_uid,
         max_counts=max_videos,
     ):
         aweme_ids = page_filter.aweme_id
+        # 诊断日志：每页返回的数据量和翻页状态
+        has_more = getattr(page_filter, 'has_more', None)
+        page_size = len(aweme_ids) if isinstance(aweme_ids, list) else (1 if aweme_ids else 0)
+        print(f"f2_info: 本页返回 {page_size} 个视频, has_more={has_more}", file=sys.stderr)
+        sys.stderr.flush()
+
         if not aweme_ids:
-            break
+            empty_page_count += 1
+            print(f"f2_info: 第 {empty_page_count} 个空页，继续翻页...", file=sys.stderr)
+            # 连续 5 个空页才放弃，避免因为中间偶尔空页丢失数据
+            if empty_page_count >= 5:
+                print(f"f2_info: 连续 {empty_page_count} 个空页，停止获取", file=sys.stderr)
+                break
+            continue
+        empty_page_count = 0  # 有数据则重置空页计数
 
         descs = page_filter.desc if isinstance(page_filter.desc, list) else [page_filter.desc]
         nicknames = page_filter.nickname if isinstance(page_filter.nickname, list) else [page_filter.nickname]
