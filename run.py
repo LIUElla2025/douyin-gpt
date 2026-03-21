@@ -205,20 +205,10 @@ def main():
     doc_path = generate_word_doc(videos, creator_name, douyin_id)
     print(f"  ✅ 已保存: {doc_path}")
 
-    # ─── Step 5: 清理 ───
-    cleaned = 0
-    for v in videos:
-        ap = v.get("audio_path")
-        if ap:
-            p = Path(ap)
-            if p.exists():
-                p.unlink(missing_ok=True)
-                cleaned += 1
-            v["audio_path"] = None
+    # ─── Step 5: 保存 ───
     clear_checkpoint(douyin_id)
     save_transcripts(videos, douyin_id)
-    if cleaned:
-        print(f"  🧹 已清理 {cleaned} 个临时音频文件")
+    print(f"  📁 音频文件保留在: {Path('douyin_data/audio/').resolve()}")
 
     # ─── 完成 ───
     print(f"\n{'=' * 60}")
