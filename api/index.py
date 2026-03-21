@@ -453,11 +453,14 @@ def transcribe():
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
     # ─── 关键：用 aweme_id 实时获取新鲜 URL（缓存的 URL 会过期）───
+    print(f"[transcribe] aweme_id={aweme_id}, cookie={bool(cookie)}")
+
     if aweme_id and cookie:
         # 优先尝试 f2（本地环境）
         fresh = None
         try:
             worker_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "f2_detail_worker.py")
+            print(f"[transcribe] f2_worker路径: {worker_script}, 存在={os.path.exists(worker_script)}")
             if os.path.exists(worker_script):
                 import subprocess, sys
                 env = os.environ.copy()
@@ -468,20 +471,25 @@ def transcribe():
                     cwd=os.path.dirname(os.path.abspath(worker_script)),
                     env=env,
                 )
+                print(f"[transcribe] f2_worker退出码={proc.returncode}, stdout长度={len(proc.stdout)}, stderr={proc.stderr[:200] if proc.stderr else ''}")
                 if proc.returncode == 0 and proc.stdout.strip():
                     fresh = json.loads(proc.stdout)
                     print(f"[transcribe] f2 实时获取成功: video_play_url={bool(fresh.get('video_play_url'))}")
+                else:
+                    print(f"[transcribe] f2_worker失败: returncode={proc.returncode}")
         except Exception as e:
-            print(f"[transcribe] f2 实时获取失败: {e}")
+            print(f"[transcribe] f2 实时获取异常: {type(e).__name__}: {e}")
 
         # f2 不可用时降级到 XBogus
         if not fresh or not fresh.get("video_play_url"):
             try:
                 fresh = _refresh_video_urls(aweme_id, cookie)
                 if fresh and not fresh.get("_error"):
-                    print(f"[transcribe] XBogus 实时获取成功")
+                    print(f"[transcribe] XBogus 实时获取成功: {list(fresh.keys())}")
+                else:
+                    print(f"[transcribe] XBogus 失败: {fresh.get('_error', 'unknown') if fresh else 'None'}")
             except Exception as e:
-                print(f"[transcribe] XBogus 实时获取失败: {e}")
+                print(f"[transcribe] XBogus 实时获取异常: {e}")
 
         # 用新鲜 URL 替换过期的
         if fresh and not fresh.get("_error"):
@@ -491,9 +499,15 @@ def transcribe():
                     vpu = vpu[0] if vpu else ""
                 if vpu:
                     video_download_url = vpu
+                    print(f"[transcribe] 已更新 video_download_url")
             if fresh.get("dash_audio_url"):
                 dash_audio_url = fresh["dash_audio_url"]
-            # 注意：不更新 audio_url（背景音乐），避免污染
+                print(f"[transcribe] 已更新 dash_audio_url")
+            if fresh.get("video_download_url") and not video_download_url:
+                video_download_url = fresh["video_download_url"]
+                print(f"[transcribe] 已更新 video_download_url (from download_addr)")
+    else:
+        print(f"[transcribe] 跳过实时获取: aweme_id={bool(aweme_id)}, cookie={bool(cookie)}")
 
     if not dash_audio_url and not video_download_url and not video_url and not audio_url:
         return jsonify({"error": "缺少音频/视频 URL，且无法实时获取"}), 400
