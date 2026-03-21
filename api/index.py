@@ -439,6 +439,12 @@ def transcribe():
     audio_url = data.get("audio_url", "").strip()
     video_download_url = data.get("video_download_url", "").strip()
     video_url = data.get("video_url", "").strip()
+    aweme_id = data.get("aweme_id", "").strip()
+    # 如果前端没传 aweme_id，从 video_url 中提取
+    if not aweme_id and video_url:
+        aweme_id = _extract_aweme_id(video_url)
+    if not aweme_id and video_download_url:
+        aweme_id = _extract_aweme_id(video_download_url)
     openai_key = cfg["openai_api_key"]
     proxy = cfg["proxy"]
     cookie = cfg["cookie"]
@@ -446,10 +452,53 @@ def transcribe():
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
-    if not dash_audio_url and not video_download_url and not video_url and not audio_url:
-        return jsonify({"error": "缺少音频/视频 URL"}), 400
+    # ─── 关键：用 aweme_id 实时获取新鲜 URL（缓存的 URL 会过期）───
+    if aweme_id and cookie:
+        # 优先尝试 f2（本地环境）
+        fresh = None
+        try:
+            worker_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "f2_detail_worker.py")
+            if os.path.exists(worker_script):
+                import subprocess, sys
+                env = os.environ.copy()
+                env["DOUYIN_COOKIE"] = cookie
+                proc = subprocess.run(
+                    [sys.executable, "-u", worker_script, "--single", aweme_id],
+                    capture_output=True, text=True, timeout=60,
+                    cwd=os.path.dirname(os.path.abspath(worker_script)),
+                    env=env,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    fresh = json.loads(proc.stdout)
+                    print(f"[transcribe] f2 实时获取成功: video_play_url={bool(fresh.get('video_play_url'))}")
+        except Exception as e:
+            print(f"[transcribe] f2 实时获取失败: {e}")
 
-    print(f"[transcribe] URLs: dash={bool(dash_audio_url)}, download={bool(video_download_url)}, video={bool(video_url)}, audio={bool(audio_url)}")
+        # f2 不可用时降级到 XBogus
+        if not fresh or not fresh.get("video_play_url"):
+            try:
+                fresh = _refresh_video_urls(aweme_id, cookie)
+                if fresh and not fresh.get("_error"):
+                    print(f"[transcribe] XBogus 实时获取成功")
+            except Exception as e:
+                print(f"[transcribe] XBogus 实时获取失败: {e}")
+
+        # 用新鲜 URL 替换过期的
+        if fresh and not fresh.get("_error"):
+            if fresh.get("video_play_url"):
+                vpu = fresh["video_play_url"]
+                if isinstance(vpu, list):
+                    vpu = vpu[0] if vpu else ""
+                if vpu:
+                    video_download_url = vpu
+            if fresh.get("dash_audio_url"):
+                dash_audio_url = fresh["dash_audio_url"]
+            # 注意：不更新 audio_url（背景音乐），避免污染
+
+    if not dash_audio_url and not video_download_url and not video_url and not audio_url:
+        return jsonify({"error": "缺少音频/视频 URL，且无法实时获取"}), 400
+
+    print(f"[transcribe] URLs: dash={bool(dash_audio_url)}, download={bool(video_download_url)}, video={bool(video_url)}, audio={bool(audio_url)}, aweme_id={aweme_id}")
 
     tmp_files = []
 
@@ -515,39 +564,11 @@ def transcribe():
             except Exception as e:
                 print(f"[transcribe] ffmpeg URL提取失败: {e}")
 
-        # --- 策略3：背景音乐（降级方案，至少能转录出东西） ---
-        if audio_url and not whisper_file:
-            try:
-                # 先用通用后缀下载，再根据文件头重命名
-                tmp = tempfile.NamedTemporaryFile(suffix=".dat", delete=False)
-                tmp_p = tmp.name
-                tmp.close()
-                tmp_files.append(tmp_p)
-                _download_url(audio_url, tmp_p, cookie, proxy, max_bytes=8 * 1024 * 1024)
-                sz = os.path.getsize(tmp_p)
-                if sz >= 1000:
-                    with open(tmp_p, "rb") as _af:
-                        hdr = _af.read(12)
-                    # 根据文件头检测实际格式
-                    if hdr[:3] == b'ID3' or (len(hdr) >= 2 and hdr[0] == 0xff and (hdr[1] & 0xe0) == 0xe0):
-                        ext = ".mp3"
-                    elif len(hdr) >= 8 and hdr[4:8] == b'ftyp':
-                        ext = ".m4a"
-                    elif hdr[:4] == b'fLaC':
-                        ext = ".flac"
-                    elif hdr[:4] == b'OggS':
-                        ext = ".ogg"
-                    elif hdr[:4] == b'RIFF':
-                        ext = ".wav"
-                    else:
-                        ext = ".m4a"  # 抖音常见格式
-                    new_path = tmp_p.rsplit(".", 1)[0] + ext
-                    os.rename(tmp_p, new_path)
-                    tmp_files.append(new_path)
-                    whisper_file = new_path
-                    print(f"[transcribe] 背景音乐降级, 大小={sz}, 格式={ext}, hdr={hdr[:8].hex()}")
-            except Exception as e:
-                print(f"[transcribe] 背景音乐失败: {e}")
+        # --- 策略3：已移除 ---
+        # 不再使用 audio_url（背景音乐）作为降级方案
+        # 背景音乐转录会导致所有视频的文稿内容完全相同
+        if not whisper_file:
+            print(f"[transcribe] DASH和视频直链均失败，跳过（不使用背景音乐避免文稿重复）")
 
         # 验证文件是否为有效的音视频（防止 HTML 错误页面被发给 Whisper）
         if whisper_file:
