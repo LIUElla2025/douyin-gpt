@@ -7,6 +7,7 @@
 """
 
 import json
+import os
 import time
 import httpx
 import tempfile
@@ -15,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 from config import OPENAI_API_KEY, TRANSCRIPTS_DIR, sanitize_id
 
-_PROXY = "http://127.0.0.1:7890"
+_PROXY = os.getenv("WHISPER_PROXY", "")  # 为空则不使用代理
 _MAX_WORKERS = 5
 _MAX_RETRIES = 2
 _CHUNK_SIZE_MB = 23  # 分片大小上限（MB），留 1MB 余量
@@ -23,12 +24,12 @@ _CHUNK_SIZE_MB = 23  # 分片大小上限（MB），留 1MB 余量
 
 def _make_client():
     """每个线程创建独立的 client，避免连接池冲突"""
+    http_kwargs = {"timeout": httpx.Timeout(300, connect=60)}
+    if _PROXY:
+        http_kwargs["proxy"] = _PROXY
     return OpenAI(
         api_key=OPENAI_API_KEY,
-        http_client=httpx.Client(
-            proxy=_PROXY,
-            timeout=httpx.Timeout(300, connect=60),
-        ),
+        http_client=httpx.Client(**http_kwargs),
     )
 
 
