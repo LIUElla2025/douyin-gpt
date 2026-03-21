@@ -140,6 +140,51 @@ def main():
     else:
         print(f"\n🤖 Step 3: 无需转录（全部已有转录或下载失败）")
 
+    # ─── Step 3.5: GPT 校对（加标点、去错别字和口水词）───
+    to_polish = [v for v in videos
+                 if v.get("transcript") and isinstance(v["transcript"], dict)
+                 and v["transcript"].get("text")
+                 and not v["transcript"]["text"].startswith("[视频描述]")
+                 and not v["transcript"].get("polished")]
+    if to_polish:
+        print(f"\n✍️  Step 3.5: GPT 校对 {len(to_polish)} 篇文稿（加标点、去口水词）...")
+        from config import OPENAI_API_KEY
+        import httpx
+        from openai import OpenAI
+        import os
+
+        proxy = os.getenv("WHISPER_PROXY", "")
+        http_kwargs = {"timeout": httpx.Timeout(120, connect=30)}
+        if proxy:
+            http_kwargs["proxy"] = proxy
+        gpt_client = OpenAI(api_key=OPENAI_API_KEY, http_client=httpx.Client(**http_kwargs))
+
+        for i, v in enumerate(to_polish):
+            raw_text = v["transcript"]["text"]
+            title = v.get("title", "")[:30]
+            try:
+                resp = gpt_client.chat.completions.create(
+                    model="gpt-4.1-mini",
+                    max_tokens=16384,
+                    messages=[
+                        {"role": "system", "content": "你是一个中文文稿校对员。请对以下语音转录文稿进行校对：\n1. 添加正确的中文标点符号（句号、逗号、问号等）\n2. 修正明显的错别字（语音识别错误）\n3. 删除口水词（嗯、啊、那个、就是说、然后呢等无意义的填充词）\n4. 保持原文意思和说话风格不变\n5. 不要添加、删除或改写任何实质内容\n6. 直接输出校对后的文字，不要加任何说明"},
+                        {"role": "user", "content": raw_text},
+                    ],
+                )
+                polished = resp.choices[0].message.content.strip()
+                if polished and len(polished) > len(raw_text) * 0.3:
+                    v["transcript"]["text"] = polished
+                    v["transcript"]["polished"] = True
+                print(f"  ✅ [{i+1}/{len(to_polish)}] {title}")
+            except Exception as e:
+                print(f"  ⬜ [{i+1}/{len(to_polish)}] {title} (校对失败: {e})")
+
+            # 每 10 个保存一次
+            if (i + 1) % 10 == 0:
+                save_transcripts(videos, douyin_id)
+
+        save_transcripts(videos, douyin_id)
+
     # 没有转录的视频用标题作为 fallback
     whisper_count = 0
     desc_count = 0

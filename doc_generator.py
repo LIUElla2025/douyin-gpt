@@ -251,27 +251,10 @@ def generate_word_doc(
             run = meta.add_run("  |  ".join(meta_parts))
             _set_run_font(run, font_name, 9, color_rgb=(0x99, 0x99, 0x99))
 
-        # 文字稿内容 — 有时间戳分段则按段落显示，否则整段
-        segments = transcript.get("segments", []) if isinstance(transcript, dict) else []
+        # 文字稿内容 — 合并为连续文章，不显示时间戳
         text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
 
-        if segments and len(segments) > 1:
-            # 按时间戳分段显示，每段带时间标记
-            for seg in segments:
-                seg_para = doc.add_paragraph()
-                _set_paragraph_spacing(seg_para, before_pt=1, after_pt=1, line_spacing=1.8)
-
-                # 时间戳标记
-                ts = _format_timestamp(seg.get("start", 0))
-                ts_run = seg_para.add_run(f"[{ts}] ")
-                _set_run_font(ts_run, font_name, 9, color_rgb=(0x99, 0x99, 0x99))
-
-                # 文字内容
-                seg_text = seg.get("text", "").strip()
-                if seg_text:
-                    text_run = seg_para.add_run(seg_text)
-                    _set_run_font(text_run, font_name, 12)
-        elif text:
+        if text:
             content_para = doc.add_paragraph()
             _set_paragraph_spacing(content_para, before_pt=6, after_pt=12, line_spacing=1.8)
             run = content_para.add_run(text)
