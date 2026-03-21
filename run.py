@@ -14,7 +14,7 @@ from pathlib import Path
 
 from scraper import (
     get_creator_videos, download_video_audio, save_video_list,
-    clear_all_data, clear_checkpoint,
+    clear_checkpoint,
 )
 from transcriber import transcribe_batch, save_transcripts, load_transcripts
 from doc_generator import generate_word_doc
@@ -42,9 +42,6 @@ def main():
 
     # ─── Step 1: 获取视频列表 ───
     print(f"\n📡 Step 1: 获取视频列表...")
-    if not args.resume:
-        clear_all_data(douyin_id)
-        print("  已清空旧数据")
 
     def on_fetch_progress(p, text):
         clean = text.split("\n---\n")[0]

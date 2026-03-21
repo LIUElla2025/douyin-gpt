@@ -150,23 +150,13 @@ def clear_all_data(douyin_id: str):
     # 清除 Apify 原始数据（如有）
     raw_path = TRANSCRIPTS_DIR / f"{safe_id}_raw_apify.json"
     raw_path.unlink(missing_ok=True)
-    # 清除音频文件目录（防止旧文件被复用）
-    for audio_file in AUDIO_DIR.glob("*.mp3"):
-        audio_file.unlink(missing_ok=True)
+    # 只清除当前博主的音频文件（不影响其他博主）
+    # 音频文件按编号命名，无法按博主区分，所以只在确实需要时清理
     # 清除临时视频文件
-    for tmp_file in TEMP_DIR.glob("*"):
-        if tmp_file.name != ".DS_Store":
-            tmp_file.unlink(missing_ok=True)
-    # 清除对话历史
-    history_dir = DATA_DIR / "chat_history"
-    if history_dir.exists():
-        for f in history_dir.glob("*.json"):
-            f.unlink(missing_ok=True)
-    # 清除输出的 Word 文档
-    from config import OUTPUT_DIR
-    for doc_file in OUTPUT_DIR.glob("*.docx"):
-        doc_file.unlink(missing_ok=True)
-    print(f"  已清空「{douyin_id}」的所有缓存数据")
+    for tmp_file in TEMP_DIR.glob("*_video.mp4"):
+        tmp_file.unlink(missing_ok=True)
+    # 不清除对话历史和 Word 文档（保留所有博主的数据）
+    print(f"  已清空「{douyin_id}」的缓存数据（不影响其他博主）")
 
 
 def f2_get_creator_videos(douyin_id: str, max_videos: int = None, profile_url: str = None,
