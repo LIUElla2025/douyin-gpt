@@ -428,6 +428,88 @@ def refresh_urls():
     )
 
 
+# ─── 转录上传的音频文件（前端下载后上传） ───
+
+
+@app.route("/api/transcribe-upload", methods=["POST"])
+def transcribe_upload():
+    """接收前端上传的音频文件，直接用 Whisper 转录"""
+    if 'audio' not in request.files:
+        return jsonify({"error": "缺少音频文件"}), 400
+
+    audio_file = request.files['audio']
+    config_str = request.form.get('config', '{}')
+    try:
+        cfg_data = json.loads(config_str)
+    except Exception:
+        cfg_data = {}
+
+    openai_key = cfg_data.get('openai_api_key', '') or os.environ.get('OPENAI_API_KEY', '')
+    proxy = cfg_data.get('proxy', '') or os.environ.get('PROXY', '')
+
+    if not openai_key:
+        return jsonify({"error": "缺少 OpenAI API Key"}), 400
+
+    tmp_files = []
+    try:
+        # 保存上传的音频到临时文件
+        suffix = os.path.splitext(audio_file.filename)[1] or '.m4a'
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        tmp_files.append(tmp_path)
+        audio_file.save(tmp_path)
+
+        file_size = os.path.getsize(tmp_path)
+        if file_size < 1000:
+            return jsonify({"error": f"音频文件太小({file_size}字节)"}), 400
+        if file_size > 25 * 1024 * 1024:
+            return jsonify({"error": f"音频过大({file_size // 1024 // 1024}MB)，Whisper限制25MB"}), 400
+
+        print(f"[transcribe-upload] 文件大小={file_size}, 后缀={suffix}")
+
+        # 调用 Whisper
+        import httpx
+        from openai import OpenAI
+        http_client = httpx.Client(proxy=proxy, timeout=httpx.Timeout(300, connect=60)) if proxy else httpx.Client(timeout=httpx.Timeout(300, connect=60))
+        client = OpenAI(api_key=openai_key, http_client=http_client)
+
+        with open(tmp_path, "rb") as f:
+            response = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                language="zh",
+                response_format="verbose_json",
+                timestamp_granularities=["segment"],
+                prompt="以下是普通话的句子，包含标点符号。",
+            )
+
+        segments = []
+        for seg in getattr(response, "segments", []) or []:
+            segments.append({
+                "start": round(getattr(seg, "start", 0), 2),
+                "end": round(getattr(seg, "end", 0), 2),
+                "text": getattr(seg, "text", "").strip(),
+            })
+
+        return jsonify({
+            "transcript": {
+                "text": response.text.strip(),
+                "segments": segments,
+                "language": getattr(response, "language", "zh"),
+            }
+        })
+
+    except Exception as e:
+        return jsonify({"error": f"转录失败: {type(e).__name__}: {e}"}), 500
+    finally:
+        for f in tmp_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
+
+
 # ─── 转录单个视频 ───
 
 
@@ -452,48 +534,92 @@ def transcribe():
     if not openai_key:
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
-    # ─── 关键：用 aweme_id 实时获取新鲜 URL（缓存的 URL 会过期）───
+    # ─── 关键：用视频列表 API 获取新鲜 URL（详情 API 被 Vercel IP 封锁）───
     _fetch_debug = ""
-    if aweme_id and cookie:
+    sec_uid = data.get("sec_uid", "").strip()
+
+    if aweme_id and cookie and sec_uid:
         _fetch_debug = f"aweme_id={aweme_id}, "
         try:
-            detail_params = {
+            # 用视频列表 API + target_ids 模式获取单个视频的新鲜 URL
+            # 这和前端获取视频列表用的是完全相同的端点，已验证在 Vercel 上可用
+            list_params = {
                 "device_platform": "webapp",
                 "aid": "6383",
                 "channel": "channel_pc_web",
-                "aweme_id": aweme_id,
+                "sec_user_id": sec_uid,
+                "max_cursor": "0",
+                "locate_query": "false",
+                "show_live_replay_strategy": "1",
+                "need_time_list": "1",
+                "time_list_query": "0",
+                "whale_cut_token": "",
+                "cut_version": "1",
+                "count": "20",
+                "publish_video_strategy_type": "2",
                 "pc_client_type": "1",
                 "version_code": "290100",
                 "version_name": "29.1.0",
                 "cookie_enabled": "true",
-                "platform": "PC",
+                "screen_width": "1920",
+                "screen_height": "1080",
+                "browser_language": "zh-CN",
+                "browser_platform": "Win32",
+                "browser_name": "Edge",
+                "browser_version": "130.0.0.0",
+                "browser_online": "true",
+                "engine_name": "Blink",
+                "engine_version": "130.0.0.0",
+                "os_name": "Windows",
+                "os_version": "10",
                 "msToken": _gen_mstoken(),
             }
-            detail_data = _douyin_api_request(
-                "https://www.douyin.com/aweme/v1/web/aweme/detail/",
-                detail_params, cookie
-            )
-            detail_item = detail_data.get("aweme_detail", {})
-            if detail_item:
-                d_audio = detail_item.get("video", {}).get("audio", {})
-                if isinstance(d_audio, dict):
-                    d_au_list = d_audio.get("url_list", [])
-                    if d_au_list:
-                        dash_audio_url = d_au_list[0]
-                        _fetch_debug += "dash=OK, "
-                d_download = detail_item.get("video", {}).get("download_addr", {})
-                d_da_list = d_download.get("url_list", [])
-                if d_da_list and not dash_audio_url:
-                    video_download_url = d_da_list[0]
-                    _fetch_debug += "download=OK, "
-                if not dash_audio_url and not video_download_url:
-                    _fetch_debug += "detail有数据但无音频URL, "
-            else:
-                _fetch_debug += "aweme_detail为空, "
+
+            # 翻页搜索目标视频（最多扫 20 页）
+            found = False
+            for _scan_page in range(20):
+                page_data = _douyin_api_request(
+                    "https://www.douyin.com/aweme/v1/web/aweme/post/",
+                    list_params, cookie
+                )
+                aweme_list = page_data.get("aweme_list", [])
+                for item in aweme_list:
+                    if str(item.get("aweme_id", "")) == str(aweme_id):
+                        # 找到目标视频，提取新鲜 URL
+                        video_obj = item.get("video", {})
+                        d_audio = video_obj.get("audio", {})
+                        if isinstance(d_audio, dict):
+                            d_au_list = d_audio.get("url_list", [])
+                            if d_au_list:
+                                dash_audio_url = d_au_list[0]
+                                _fetch_debug += "dash=OK(列表API), "
+                        d_download = video_obj.get("download_addr", {})
+                        d_da_list = d_download.get("url_list", [])
+                        if d_da_list and not dash_audio_url:
+                            video_download_url = d_da_list[0]
+                            _fetch_debug += "download=OK(列表API), "
+                        found = True
+                        break
+                if found:
+                    break
+                # 翻到下一页
+                has_more = page_data.get("has_more", False)
+                next_cursor = page_data.get("max_cursor", 0)
+                if not has_more or not next_cursor:
+                    break
+                list_params["max_cursor"] = str(next_cursor)
+                time.sleep(1)  # 翻页间隔
+
+            if not found:
+                _fetch_debug += "列表API中未找到该视频, "
+
         except Exception as e:
-            _fetch_debug += f"fetch异常={type(e).__name__}:{e}, "
+            _fetch_debug += f"列表API异常={type(e).__name__}:{e}, "
+
+    elif aweme_id and cookie and not sec_uid:
+        _fetch_debug = f"aweme_id={aweme_id}, 缺少sec_uid(前端需传), "
     elif not aweme_id:
-        _fetch_debug = "无aweme_id(前端未传video_url?), "
+        _fetch_debug = "无aweme_id, "
     else:
         _fetch_debug = "无cookie, "
 

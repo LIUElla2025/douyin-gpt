@@ -1492,12 +1492,41 @@ async function doTranscription() {
     async function transcribeOne(v, idx) {
       for (let retry = 0; retry < MAX_RETRIES; retry++) {
         try {
-          const res = await api('transcribe', {
-            dash_audio_url: v.dash_audio_url || '',
-            audio_url: v.audio_url || '',
-            video_download_url: v.video_download_url || '',
-            video_url: v.url,
-          });
+          // 优先在浏览器端下载 DASH 音频（避免 URL 过期 + Vercel IP 被封）
+          let audioBlob = null;
+          const audioSrc = v.dash_audio_url || v.video_download_url || '';
+          if (audioSrc) {
+            try {
+              const audioResp = await fetch(audioSrc);
+              if (audioResp.ok) audioBlob = await audioResp.blob();
+            } catch(e) { /* 浏览器跨域限制，降级到后端下载 */ }
+          }
+
+          let res;
+          if (audioBlob && audioBlob.size > 1000) {
+            // 方案A：浏览器下载成功，直接上传音频数据给后端转录
+            const formData = new FormData();
+            formData.append('audio', audioBlob, `${v.id}.m4a`);
+            formData.append('config', JSON.stringify({
+              openai_api_key: getConfig().openai_api_key,
+              proxy: getConfig().proxy,
+            }));
+            const uploadResp = await fetch(API_BASE + '/api/transcribe-upload', {
+              method: 'POST', body: formData,
+            });
+            res = await uploadResp.json();
+            if (uploadResp.status !== 200) throw new Error(res.error || '转录失败');
+          } else {
+            // 方案B：降级到后端下载（URL 可能已过期）
+            res = await api('transcribe', {
+              dash_audio_url: v.dash_audio_url || '',
+              audio_url: v.audio_url || '',
+              video_download_url: v.video_download_url || '',
+              video_url: v.url,
+              aweme_id: v.id || '',
+              sec_uid: STATE.secUid || '',
+            });
+          }
           v.transcript = res.transcript;
           saveTranscript(v.id, res.transcript);
           completed++;
