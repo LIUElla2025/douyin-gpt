@@ -453,10 +453,10 @@ def transcribe():
         return jsonify({"error": "缺少 OpenAI API Key"}), 400
 
     # ─── 关键：用 aweme_id 实时获取新鲜 URL（缓存的 URL 会过期）───
+    _fetch_debug = ""
     if aweme_id and cookie:
-        print(f"[transcribe] 实时获取 aweme_id={aweme_id}")
+        _fetch_debug = f"aweme_id={aweme_id}, "
         try:
-            # 构建详情 API 参数（不同于列表 API 的参数）
             detail_params = {
                 "device_platform": "webapp",
                 "aid": "6383",
@@ -475,26 +475,27 @@ def transcribe():
             )
             detail_item = detail_data.get("aweme_detail", {})
             if detail_item:
-                # DASH 纯音频流（最佳：口述内容，文件小）
                 d_audio = detail_item.get("video", {}).get("audio", {})
                 if isinstance(d_audio, dict):
                     d_au_list = d_audio.get("url_list", [])
                     if d_au_list:
                         dash_audio_url = d_au_list[0]
-                        print(f"[transcribe] 实时获取 dash_audio_url 成功")
-                # 视频下载地址（备选）
+                        _fetch_debug += "dash=OK, "
                 d_download = detail_item.get("video", {}).get("download_addr", {})
                 d_da_list = d_download.get("url_list", [])
                 if d_da_list and not dash_audio_url:
                     video_download_url = d_da_list[0]
-                    print(f"[transcribe] 实时获取 video_download_url 成功")
-                # 不更新 audio_url（背景音乐），避免污染
+                    _fetch_debug += "download=OK, "
+                if not dash_audio_url and not video_download_url:
+                    _fetch_debug += "detail有数据但无音频URL, "
             else:
-                print(f"[transcribe] 实时获取: aweme_detail 为空")
+                _fetch_debug += "aweme_detail为空, "
         except Exception as e:
-            print(f"[transcribe] 实时获取失败: {type(e).__name__}: {e}")
+            _fetch_debug += f"fetch异常={type(e).__name__}:{e}, "
     elif not aweme_id:
-        print(f"[transcribe] 无 aweme_id，跳过实时获取")
+        _fetch_debug = "无aweme_id(前端未传video_url?), "
+    else:
+        _fetch_debug = "无cookie, "
 
     if not dash_audio_url and not video_download_url and not video_url and not audio_url:
         return jsonify({"error": "缺少音频/视频 URL，且无法实时获取"}), 400
@@ -584,7 +585,7 @@ def transcribe():
                 pass
 
         if not whisper_file:
-            return jsonify({"error": f"所有音频源均失败，URL可能已过期。debug: dash={bool(dash_audio_url)}, download={bool(video_download_url)}, audio={bool(audio_url)}"}), 400
+            return jsonify({"error": f"所有音频源均失败。fetch: {_fetch_debug}result: dash={bool(dash_audio_url)}, download={bool(video_download_url)}, audio={bool(audio_url)}"}), 400
 
         # 最终大小检查
         whisper_size = os.path.getsize(whisper_file)
