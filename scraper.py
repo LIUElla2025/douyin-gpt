@@ -525,13 +525,44 @@ def get_creator_videos(douyin_id: str, max_videos: int = 200, progress_callback=
     )
 
 
+def _fetch_fresh_video_url(aweme_id: str) -> str:
+    """调用 f2 详情 API 获取视频的实时播放 URL（URL 有效期只有几分钟）"""
+    import sys as _sys
+    cookie = _get_douyin_cookie()
+    if not cookie or not aweme_id:
+        return ""
+
+    worker_script = str(Path(__file__).resolve().parent / "f2_detail_worker.py")
+    python_exe = _sys.executable
+
+    import os as _os
+    env = _os.environ.copy()
+    env["DOUYIN_COOKIE"] = cookie
+
+    try:
+        result = subprocess.run(
+            [python_exe, "-u", worker_script, "--single", aweme_id],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(Path(__file__).resolve().parent),
+            env=env,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            url = data.get("video_play_url", "")
+            if isinstance(url, list):
+                url = url[0] if url else ""
+            return url
+    except Exception as e:
+        print(f"  获取实时链接失败: {e}")
+    return ""
+
+
 def download_video_audio(video: dict, index: int) -> Path | None:
     """下载视频并提取口述音频
 
-    优先级:
-    1. 视频直链 (video_play_url) → ffmpeg 提取音频（最准确，是真正的口述内容）
-    2. yt-dlp 从视频 URL 提取音频
-    3. 音频直链 (audio_url / music_play_url) — 仅作最后备选，可能是背景音乐
+    核心逻辑：用视频 ID 实时获取新鲜的 video_play_url（避免过期链接），
+    下载视频后用 ffmpeg 提取音频。
+    不使用 audio_url（背景音乐）作为 fallback，避免所有视频转录相同。
     """
     safe_title = re.sub(r'[^\w\u4e00-\u9fff]', '_', video.get("title", f"video_{index}"))[:50]
     output_path = AUDIO_DIR / f"{index:04d}_{safe_title}.mp3"
@@ -539,23 +570,23 @@ def download_video_audio(video: dict, index: int) -> Path | None:
     if output_path.exists():
         return output_path
 
-    # 方案1: 从视频直链下载视频，ffmpeg 提取音频（最可靠）
-    video_play_url = video.get("video_play_url", "")
-    # video_play_url 可能是 list（f2 返回的 url_list），取第一个
-    if isinstance(video_play_url, list):
-        video_play_url = video_play_url[0] if video_play_url else ""
-    if video_play_url:
+    aweme_id = video.get("id", "")
+
+    # ─── 方案1: 实时获取视频直链 → 下载视频 → ffmpeg 提取音频 ───
+    print(f"  [{index}] 获取实时链接: {video.get('title', '')[:30]}...")
+    fresh_url = _fetch_fresh_video_url(aweme_id)
+
+    if fresh_url:
         temp_video = TEMP_DIR / f"{index:04d}_video.mp4"
         try:
-            req = urllib.request.Request(video_play_url)
-            req.add_header('User-Agent', 'Mozilla/5.0')
+            req = urllib.request.Request(fresh_url)
+            req.add_header('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_9) AppleWebKit/537.36')
             req.add_header('Referer', 'https://www.douyin.com/')
             resp = urllib.request.urlopen(req, timeout=60)
             with open(temp_video, 'wb') as f:
                 f.write(resp.read())
 
-            if temp_video.stat().st_size > 5000:  # 至少 5KB
-                # ffmpeg 提取音频
+            if temp_video.stat().st_size > 10000:  # 至少 10KB（视频文件应该更大）
                 ffmpeg_cmd = [
                     "ffmpeg", "-y", "-i", str(temp_video),
                     "-vn", "-acodec", "libmp3lame", "-q:a", "5",
@@ -569,66 +600,21 @@ def download_video_audio(video: dict, index: int) -> Path | None:
                 if ffmpeg_result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1000:
                     return output_path
                 else:
+                    print(f"  [{index}] ffmpeg 提取音频失败")
                     output_path.unlink(missing_ok=True)
             else:
+                size = temp_video.stat().st_size if temp_video.exists() else 0
+                print(f"  [{index}] 视频文件太小 ({size} bytes)，可能链接已过期")
                 temp_video.unlink(missing_ok=True)
-        except FileNotFoundError:
-            # ffmpeg 未安装
-            temp_video.unlink(missing_ok=True)
         except Exception as e:
-            print(f"  视频直链下载失败 [{index}]: {e}")
+            print(f"  [{index}] 视频下载失败: {e}")
             temp_video.unlink(missing_ok=True)
             output_path.unlink(missing_ok=True)
+    else:
+        print(f"  [{index}] 无法获取实时视频链接")
 
-    # 方案2: yt-dlp 从视频页面提取音频
-    url = video.get("url") or video.get("share_url") or video.get("video_url")
-    if url:
-        temp_pattern = f"{index:04d}_temp"
-        try:
-            cmd = [
-                "yt-dlp", "-x",
-                "--audio-format", "mp3",
-                "--audio-quality", "5",
-                "-o", str(TEMP_DIR / f"{temp_pattern}.%(ext)s"),
-                "--no-playlist",
-                "--socket-timeout", "30",
-                url,
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            if result.returncode == 0:
-                matched = list(TEMP_DIR.glob(f"{temp_pattern}*"))
-                if matched:
-                    matched[0].rename(output_path)
-                    for f in matched[1:]:
-                        f.unlink(missing_ok=True)
-                    return output_path
-        except FileNotFoundError:
-            pass  # yt-dlp not installed
-        except subprocess.TimeoutExpired:
-            for f in TEMP_DIR.glob(f"{temp_pattern}*"):
-                f.unlink(missing_ok=True)
-        except Exception as e:
-            print(f"  yt-dlp 失败 [{index}]: {e}")
-
-    # 方案3: 音频直链（可能是背景音乐，仅作最后备选）
-    audio_url = video.get("audio_url", "")
-    if isinstance(audio_url, list):
-        audio_url = audio_url[0] if audio_url else ""
-    if audio_url:
-        try:
-            req = urllib.request.Request(audio_url)
-            req.add_header('User-Agent', 'Mozilla/5.0')
-            resp = urllib.request.urlopen(req, timeout=30)
-            with open(output_path, 'wb') as f:
-                f.write(resp.read())
-            if output_path.stat().st_size > 1000:
-                return output_path
-            else:
-                output_path.unlink(missing_ok=True)
-        except Exception as e:
-            print(f"  音频直链下载失败 [{index}]: {e}")
-            output_path.unlink(missing_ok=True)
-
+    # ─── 不使用 audio_url (背景音乐) 作为 fallback ───
+    # 背景音乐转录会导致所有视频文稿完全相同
     return None
 
 

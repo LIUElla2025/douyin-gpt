@@ -9,7 +9,6 @@ _FAVICON = Path(__file__).resolve().parent / "favicon.svg"
 from scraper import (
     get_creator_videos, download_all_audios, save_video_list,
     load_checkpoint_videos, clear_checkpoint, clear_all_data,
-    fill_missing_audio_urls,
 )
 from transcriber import transcribe_batch, save_transcripts, load_transcripts
 from doc_generator import generate_word_doc
@@ -294,30 +293,13 @@ def _run_extraction(douyin_id: str, max_videos: int = None, keyword: str = "",
                 if merged:
                     status.info(f"🔄 从上次结果恢复了 {merged} 条已有转录")
 
-        # ─── 步骤1.8: 用 f2 详情 API 补全缺少视频直链的视频 ───
-        missing_url_count = sum(1 for v in videos
-                                if not v.get("video_play_url") and not v.get("audio_url"))
-        if missing_url_count > 0:
-            status.info(f"🔗 {missing_url_count} 个视频缺少下载链接，通过 f2 详情API补全...")
-            progress_bar.progress(0.18, text=f"补全下载链接 (0/{missing_url_count})...")
-
-            def _on_fill_progress(p, msg):
-                progress_bar.progress(min(0.18 + p * 0.02, 0.19), text=msg)
-                status.info(f"🔗 {msg}")
-
-            filled = fill_missing_audio_urls(videos, progress_callback=_on_fill_progress)
-            if filled > 0:
-                status.success(f"✅ 成功补全 {filled}/{missing_url_count} 个下载链接")
-                save_video_list(videos, douyin_id)
-            else:
-                status.warning(f"⚠️ 补全直链失败（抖音限流），这些视频将通过 yt-dlp 备用方案下载")
-
         # ─── 步骤2: 下载音频 ───
-        # 有 video_play_url 或 audio_url 的视频都可以下载
+        # 每个视频下载时会实时获取新鲜的视频直链（不依赖缓存的过期 URL）
+        # 只需要有视频 ID 就可以尝试下载
         need_audio = [v for v in videos
                       if not (v.get("transcript") and isinstance(v.get("transcript"), dict)
                               and v["transcript"].get("text"))
-                      and (v.get("video_play_url") or v.get("audio_url") or v.get("url"))]
+                      and v.get("id")]
         if need_audio:
             status.info(f"🔊 下载 {len(need_audio)} 个视频的音频（跳过已转录的）...")
             progress_bar.progress(0.2, text="下载音频...")
